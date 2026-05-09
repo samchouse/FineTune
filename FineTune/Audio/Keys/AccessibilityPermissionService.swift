@@ -49,9 +49,11 @@ final class AccessibilityPermissionService: AccessibilityTrustProviding {
         refreshDidFinish?()
     }
 
-    /// Idempotent. Subscribes to `com.apple.accessibility.api`.
+    /// Idempotent. Subscribes to `com.apple.accessibility.api` and app/window activation.
     func start() {
         guard trustObserver == nil else { return }
+        
+        // 1. System notification for AX changes (sent by UniversalAccess)
         trustObserver = DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("com.apple.accessibility.api"),
             object: nil,
@@ -59,6 +61,17 @@ final class AccessibilityPermissionService: AccessibilityTrustProviding {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.scheduleDebouncedRefresh()
+            }
+        }
+        
+        // 2. Refresh when the app becomes active
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.refresh()
             }
         }
     }
@@ -71,6 +84,7 @@ final class AccessibilityPermissionService: AccessibilityTrustProviding {
             DistributedNotificationCenter.default().removeObserver(observer)
             trustObserver = nil
         }
+        NotificationCenter.default.removeObserver(self, name: NSApplication.didBecomeActiveNotification, object: nil)
     }
 
     private func scheduleDebouncedRefresh() {

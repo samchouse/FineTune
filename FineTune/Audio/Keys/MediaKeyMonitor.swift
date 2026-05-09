@@ -119,6 +119,12 @@ final class MediaKeyMonitor {
 
     /// Reconciles tap state against settings + Accessibility trust. Idempotent.
     func reconcile() {
+        // If we're in an error state (offline), tear down the existing (possibly 
+        // inert) tap so `start()` can perform a fresh installation.
+        if mediaKeyStatus.isOffline {
+            stop()
+        }
+
         if settingsManager.appSettings.mediaKeyControlEnabled && accessibility.isTrusted {
             // Post-regrant taps can come up inert; arm a probe to surface that to the user.
             let wasOffline = (tap == nil)
@@ -225,7 +231,8 @@ final class MediaKeyMonitor {
             currentVolume: volumeMonitor.volumes[deviceID] ?? 0,
             currentMute: volumeMonitor.muteStates[deviceID] ?? false,
             setVolume: { id, vol in volumeMonitor.setVolume(for: id, to: vol) },
-            setMute:   { id, mute in volumeMonitor.setMute(for: id, to: mute) }
+            setMute:   { id, mute in volumeMonitor.setMute(for: id, to: mute) },
+            getVolume: { id in volumeMonitor.volumes[id] ?? 0 }
         )
     }
 
@@ -239,7 +246,8 @@ final class MediaKeyMonitor {
         currentVolume: Float,
         currentMute: Bool,
         setVolume: (AudioDeviceID, Float) -> Void,
-        setMute: (AudioDeviceID, Bool) -> Void
+        setMute: (AudioDeviceID, Bool) -> Void,
+        getVolume: (AudioDeviceID) -> Float
     ) {
         let shouldShowHUD = !popupVisibility.isVisible
 
@@ -282,8 +290,10 @@ final class MediaKeyMonitor {
         case .muteToggle:
             let newMute = !currentMute
             setMute(deviceID, newMute)
+            // Re-read volume in case setMute restored it (software mode)
+            let displayVolume = getVolume(deviceID)
             if shouldShowHUD {
-                hudController.show(volume: currentVolume, mute: newMute, deviceName: deviceName)
+                hudController.show(volume: displayVolume, mute: newMute, deviceName: deviceName)
             }
             iconCoordinator?.flashDevice()
         }
