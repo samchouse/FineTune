@@ -19,8 +19,8 @@ final class MediaKeyMonitor {
     private let mediaKeyStatus: MediaKeyStatus
     private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "MediaKeyMonitor")
 
-    /// Step size applied per keypress (1/16 matches Apple's default cadence).
-    private let volumeStep: Float = 1.0 / 16.0
+    /// Step size applied per keypress (5% matching user preference).
+    private let volumeStep: Float = 0.05
 
     // MARK: - Tap state
 

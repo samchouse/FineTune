@@ -83,11 +83,11 @@ struct MediaKeyMonitorHandlerTests {
             setMute: { _, _ in },
             getVolume: { _ in 0.5 }
         )
-        let expected: Float = 0.5 + 1.0 / 16.0
+        let expected: Float = 0.5 + 0.05
         #expect(writtenVolume == expected)
     }
 
-    @Test("volumeDown from 0.5 sets volume to 0.4375 (1/16 step)")
+    @Test("volumeDown from 0.5 sets volume to 0.45 (5% step)")
     func volumeDownStep() {
         let (monitor, _, _, _) = makeMonitor()
         let deviceID: AudioDeviceID = 1
@@ -103,11 +103,11 @@ struct MediaKeyMonitorHandlerTests {
             setMute: { _, _ in },
             getVolume: { _ in 0.5 }
         )
-        let expected: Float = 0.5 - 1.0 / 16.0
+        let expected: Float = 0.5 - 0.05
         #expect(writtenVolume == expected)
     }
 
-    @Test("volumeUp clamps at 1.0 when current is 0.9375 or higher")
+    @Test("volumeUp clamps at 1.0 when current is 0.95 or higher")
     func volumeUpClamp() {
         let (monitor, _, _, _) = makeMonitor()
         let deviceID: AudioDeviceID = 1
@@ -147,7 +147,7 @@ struct MediaKeyMonitorHandlerTests {
 
     // MARK: - Repeat handling (AC #6, #7, #8, #10)
 
-    @Test("volumeUp(isRepeat: true) from 0.5 steps volume to 0.5625 (AC #7 companion)")
+    @Test("volumeUp(isRepeat: true) from 0.5 steps volume to 0.55 (AC #7 companion)")
     func volumeUpRepeatStepsVolume() {
         let (monitor, _, _, _) = makeMonitor()
         let deviceID: AudioDeviceID = 1
@@ -163,11 +163,11 @@ struct MediaKeyMonitorHandlerTests {
             setMute: { _, _ in },
             getVolume: { _ in 0.5 }
         )
-        let expected: Float = 0.5 + 1.0 / 16.0
+        let expected: Float = 0.5 + 0.05
         #expect(writtenVolume == expected)
     }
 
-    @Test("volumeDown(isRepeat: true) from 0.5 writes 0.4375 (AC #6)")
+    @Test("volumeDown(isRepeat: true) from 0.5 writes 0.45 (AC #6)")
     func volumeDownRepeatStepsVolume() {
         let (monitor, _, _, _) = makeMonitor()
         let deviceID: AudioDeviceID = 1
@@ -183,11 +183,11 @@ struct MediaKeyMonitorHandlerTests {
             setMute: { _, _ in },
             getVolume: { _ in 0.5 }
         )
-        let expected: Float = 0.5 - 1.0 / 16.0
+        let expected: Float = 0.5 - 0.05
         #expect(writtenVolume == expected)
     }
 
-    @Test("4 volumeUp repeats from 0.5 land at 0.5 + 4·(1/16) = 0.75")
+    @Test("4 volumeUp repeats from 0.5 land at 0.5 + 4·(0.05) = 0.7")
     func fourRepeatsCumulative() {
         let (monitor, _, _, _) = makeMonitor()
         let deviceID: AudioDeviceID = 1
@@ -205,7 +205,7 @@ struct MediaKeyMonitorHandlerTests {
                 getVolume: { _ in currentVolume }
             )
         }
-        let expected: Float = 0.5 + 4.0 * (1.0 / 16.0)
+        let expected: Float = 0.5 + 4.0 * 0.05
         #expect(currentVolume == expected)
     }
 
@@ -315,7 +315,7 @@ struct MediaKeyMonitorHandlerTests {
             setMute: { _, m in writtenMute = m },
             getVolume: { _ in 0.5 }
         )
-        let expected: Float = 0.5 + 1.0 / 16.0
+        let expected: Float = 0.5 + 0.05
         #expect(writtenMute == false)
         #expect(writtenVolume == expected)
     }
@@ -369,7 +369,7 @@ struct MediaKeyMonitorHandlerTests {
             deviceID: deviceID,
             tier: .hardware,
             deviceName: "Test Device",
-            currentVolume: 1.0 / 16.0,
+            currentVolume: 0.05,
             currentMute: false,
             setVolume: { _, v in writtenVolume = v },
             setMute: { _, m in writtenMute = m },

@@ -101,7 +101,7 @@ final class DDCController {
     /// Software mute: saves current volume, sets to 0.
     func mute(for deviceID: AudioDeviceID) {
         guard let uid = deviceUIDs[deviceID] else { return }
-        let currentVolume = cachedVolumes[deviceID] ?? 50
+        let currentVolume = cachedVolumes[deviceID] ?? 5
         if currentVolume > 0 {
             settingsManager.setDDCSavedVolume(for: uid, to: currentVolume)
         }
@@ -114,7 +114,7 @@ final class DDCController {
     /// Software unmute: restores saved volume.
     func unmute(for deviceID: AudioDeviceID) {
         guard let uid = deviceUIDs[deviceID] else { return }
-        let savedVolume = settingsManager.getDDCSavedVolume(for: uid) ?? 50
+        let savedVolume = settingsManager.getDDCSavedVolume(for: uid) ?? 5
         settingsManager.setDDCMuteState(for: uid, to: false)
         setVolume(for: deviceID, to: savedVolume)
     }

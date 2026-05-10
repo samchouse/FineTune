@@ -462,7 +462,7 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
 
                 let currentVisibleVolume = volumes[deviceID] ?? settingsManager.getSoftwareDeviceVolume(for: deviceUID) ?? 0
                 if currentVisibleVolume == 0 {
-                    let restoredVolume = settingsManager.getSoftwareDeviceSavedVolume(for: deviceUID) ?? 0.5
+                    let restoredVolume = settingsManager.getSoftwareDeviceSavedVolume(for: deviceUID) ?? 0.05
                     settingsManager.setSoftwareDeviceVolume(for: deviceUID, to: restoredVolume)
                     volumes[deviceID] = restoredVolume
                     onVolumeChanged?(deviceID, restoredVolume)
@@ -964,7 +964,7 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
             if let ddcVolume = ddcController.getVolume(for: deviceID) {
                 volumes[deviceID] = Float(ddcVolume) / 100.0
             } else {
-                volumes[deviceID] = 0.5
+                volumes[deviceID] = 0.05
             }
             muteStates[deviceID] = ddcController.isMuted(for: deviceID)
             return

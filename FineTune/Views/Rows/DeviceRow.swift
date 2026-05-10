@@ -59,8 +59,8 @@ struct DeviceRow: View {
     /// that display as "0%" but fail exact Double equality.
     private var showMutedIcon: Bool { isMuted || displayedPercentage == 0 }
 
-    /// Default slider position to restore when unmuting from 0 (50%)
-    private let defaultUnmuteVolume: Double = 0.5
+    /// Default slider position to restore when unmuting from 0 (5%)
+    private let defaultUnmuteVolume: Double = 0.05
 
     init(
         device: AudioDevice,

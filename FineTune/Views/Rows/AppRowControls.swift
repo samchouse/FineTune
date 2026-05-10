@@ -55,7 +55,7 @@ struct AppRowControls: View {
             MuteButton(isMuted: showMutedIcon, levelFraction: sliderValue) {
                 if showMutedIcon {
                     if displayedPercentage == 0 {
-                        onVolumeChange(1.0)
+                        onVolumeChange(0.0025) // 5% slider = 0.05^2 = 0.0025 gain
                     }
                     onMuteChange(false)
                 } else {
