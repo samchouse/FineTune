@@ -257,12 +257,21 @@ final class MediaKeyMonitor {
                 logger.debug("DDC repeat coalesced")
                 return
             }
-            let newVolume = min(1.0, currentVolume + volumeStep)
-            // Volume-up from muted unmutes (system HUD parity).
+            
+            // If muted, first press/repeat only unmutes (which restores volume).
             if currentMute {
                 setMute(deviceID, false)
+                let restoredVolume = getVolume(deviceID)
+                if shouldShowHUD {
+                    hudController.show(volume: restoredVolume, mute: false, deviceName: deviceName)
+                }
+                iconCoordinator?.flashDevice()
+                return
             }
+            
+            let newVolume = min(1.0, round((currentVolume + volumeStep) * 100) / 100)
             setVolume(deviceID, newVolume)
+            
             if shouldShowHUD {
                 hudController.show(volume: newVolume, mute: false, deviceName: deviceName)
             }
@@ -273,14 +282,25 @@ final class MediaKeyMonitor {
                 logger.debug("DDC repeat coalesced")
                 return
             }
-            let newVolume = max(0, currentVolume - volumeStep)
-            let willBeSilent = newVolume <= 0.001
-            // muted+audible → unmute; unmuted+silent → auto-mute (system HUD parity).
-            if currentMute && !willBeSilent {
+            
+            // If muted, first press/repeat only unmutes (which restores volume).
+            if currentMute {
                 setMute(deviceID, false)
-            } else if !currentMute && willBeSilent {
+                let restoredVolume = getVolume(deviceID)
+                if shouldShowHUD {
+                    hudController.show(volume: restoredVolume, mute: false, deviceName: deviceName)
+                }
+                iconCoordinator?.flashDevice()
+                return
+            }
+            
+            let newVolume = max(0.0, round((currentVolume - volumeStep) * 100) / 100)
+            let willBeSilent = newVolume <= 0.001
+            
+            if willBeSilent {
                 setMute(deviceID, true)
             }
+            
             setVolume(deviceID, newVolume)
             if shouldShowHUD {
                 hudController.show(volume: newVolume, mute: willBeSilent, deviceName: deviceName)

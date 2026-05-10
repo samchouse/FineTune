@@ -67,7 +67,7 @@ struct MediaKeyMonitorHandlerTests {
 
     // MARK: - Volume step arithmetic
 
-    @Test("volumeUp from 0.5 sets volume to 0.5625 (1/16 step)")
+    @Test("volumeUp from 0.5 sets volume to 0.55 (5% step)")
     func volumeUpStep() {
         let (monitor, _, _, _) = makeMonitor()
         let deviceID: AudioDeviceID = 1
@@ -83,7 +83,7 @@ struct MediaKeyMonitorHandlerTests {
             setMute: { _, _ in },
             getVolume: { _ in 0.5 }
         )
-        let expected: Float = 0.5 + 0.05
+        let expected: Float = 0.55
         #expect(writtenVolume == expected)
     }
 
@@ -103,7 +103,7 @@ struct MediaKeyMonitorHandlerTests {
             setMute: { _, _ in },
             getVolume: { _ in 0.5 }
         )
-        let expected: Float = 0.5 - 0.05
+        let expected: Float = 0.45
         #expect(writtenVolume == expected)
     }
 
@@ -187,7 +187,7 @@ struct MediaKeyMonitorHandlerTests {
         #expect(writtenVolume == expected)
     }
 
-    @Test("4 volumeUp repeats from 0.5 land at 0.5 + 4·(0.05) = 0.7")
+    @Test("4 volumeUp repeats from 0.5 land at 0.7")
     func fourRepeatsCumulative() {
         let (monitor, _, _, _) = makeMonitor()
         let deviceID: AudioDeviceID = 1
@@ -205,8 +205,7 @@ struct MediaKeyMonitorHandlerTests {
                 getVolume: { _ in currentVolume }
             )
         }
-        let expected: Float = 0.5 + 4.0 * 0.05
-        #expect(currentVolume == expected)
+        #expect(currentVolume == 0.7)
     }
 
     @Test("3 volumeUp repeats from 0.9 clamp at 1.0")
@@ -298,7 +297,7 @@ struct MediaKeyMonitorHandlerTests {
 
     // MARK: - Mute semantics on volume keys (volumeHUD / macOS parity)
 
-    @Test("volumeUp while muted auto-unmutes (bug: F12 after F10 used to stay muted)")
+    @Test("volumeUp while muted only restores (first press)")
     func volumeUpWhileMutedUnmutes() {
         let (monitor, _, _, _) = makeMonitor()
         let deviceID: AudioDeviceID = 1
@@ -309,15 +308,15 @@ struct MediaKeyMonitorHandlerTests {
             deviceID: deviceID,
             tier: .hardware,
             deviceName: "Test Device",
-            currentVolume: 0.5,
+            currentVolume: 0.0,
             currentMute: true,
             setVolume: { _, v in writtenVolume = v },
             setMute: { _, m in writtenMute = m },
             getVolume: { _ in 0.5 }
         )
-        let expected: Float = 0.5 + 0.05
         #expect(writtenMute == false)
-        #expect(writtenVolume == expected)
+        // Should NOT have called setVolume yet on the first press (only setMute)
+        #expect(writtenVolume == nil)
     }
 
     @Test("volumeUp while unmuted does not touch mute state")
@@ -339,26 +338,28 @@ struct MediaKeyMonitorHandlerTests {
         #expect(setMuteCalls == 0)
     }
 
-    @Test("volumeDown to audible while muted auto-unmutes")
+    @Test("volumeDown while muted only restores (first press)")
     func volumeDownToAudibleWhileMutedUnmutes() {
         let (monitor, _, _, _) = makeMonitor()
         let deviceID: AudioDeviceID = 1
         var writtenMute: Bool?
+        var writtenVolume: Float?
         monitor.handleCore(
             event: .volumeDown(isRepeat: false),
             deviceID: deviceID,
             tier: .hardware,
             deviceName: "Test Device",
-            currentVolume: 0.5,
+            currentVolume: 0.0,
             currentMute: true,
-            setVolume: { _, _ in },
+            setVolume: { _, v in writtenVolume = v },
             setMute: { _, m in writtenMute = m },
             getVolume: { _ in 0.5 }
         )
         #expect(writtenMute == false)
+        #expect(writtenVolume == nil)
     }
 
-    @Test("volumeDown to 0 while unmuted auto-mutes (macOS native parity)")
+    @Test("volumeDown to 0 while unmuted auto-mutes")
     func volumeDownToZeroAutoMutes() {
         let (monitor, _, _, _) = makeMonitor()
         let deviceID: AudioDeviceID = 1

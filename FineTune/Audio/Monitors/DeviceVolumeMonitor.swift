@@ -189,7 +189,9 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     func outputProcessingGain(for deviceID: AudioDeviceID) -> Float {
         guard outputVolumeBackend(for: deviceID) == .software else { return 1.0 }
         if muteStates[deviceID] ?? false { return 0.0 }
-        return volumes[deviceID] ?? 1.0
+        
+        let sliderValue = Double(volumes[deviceID] ?? 1.0)
+        return VolumeMapping.sliderToGain(sliderValue)
     }
 
     func refreshOutputDeviceStates() {
