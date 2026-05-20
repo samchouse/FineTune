@@ -31,6 +31,7 @@ struct SettingsJSONTests {
         original.appBoosts = ["com.test.app": 2.0]
         original.appDeviceRouting = ["com.test.app": "device-uid-123"]
         original.pinnedApps = Set(["com.test.app"])
+        original.lastPlaybackOutputDeviceUID = "uid-last-playback"
         original.outputDevicePriority = ["uid-a", "uid-b", "uid-c"]
         original.ddcVolumes = ["monitor-1": 75]
         original.ddcMuteStates = ["monitor-1": false]
@@ -46,6 +47,7 @@ struct SettingsJSONTests {
         #expect(decoded.appBoosts == original.appBoosts)
         #expect(decoded.appDeviceRouting == original.appDeviceRouting)
         #expect(decoded.pinnedApps == original.pinnedApps)
+        #expect(decoded.lastPlaybackOutputDeviceUID == original.lastPlaybackOutputDeviceUID)
         #expect(decoded.outputDevicePriority == original.outputDevicePriority)
         #expect(decoded.ddcVolumes == original.ddcVolumes)
         #expect(decoded.ddcMuteStates == original.ddcMuteStates)

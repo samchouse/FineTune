@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		140F6FF7C7CD8F6C1D73121E /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = 75DA616DEB24648C4BDE9092 /* KeyboardShortcuts */; };
+		222266732FBE4BB800BA59B5 /* FineTuneDriver.driver in Resources */ = {isa = PBXBuildFile; fileRef = 222266732FBE4BB800BA59B4 /* FineTuneDriver.driver */; };
 		7980FFE92F261AA200AF5F85 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 79SPARK012F0600000008D52 /* Sparkle */; };
 		7988AE522F1CC55900E6D086 /* fineTuneIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 7988AE512F1CC55900E6D086 /* fineTuneIcon.icon */; };
 		79B1000B2F35000000000002 /* IOBluetooth.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 79B1000A2F35000000000001 /* IOBluetooth.framework */; settings = {ATTRIBUTES = (Weak, ); }; };
@@ -17,6 +18,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		22C8F1E62FBE9D1300D5C00F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 79A607A72F05C9E00008D52A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 222266722FBE4BB800BA59B4;
+			remoteInfo = FineTuneDriver;
+		};
 		79A607BD2F05C9E10008D52A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 79A607A72F05C9E00008D52A /* Project object */;
@@ -34,6 +42,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		222266732FBE4BB800BA59B4 /* FineTuneDriver.driver */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FineTuneDriver.driver; sourceTree = BUILT_PRODUCTS_DIR; };
 		7988AE512F1CC55900E6D086 /* fineTuneIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = fineTuneIcon.icon; sourceTree = "<group>"; };
 		79A607AF2F05C9E00008D52A /* FineTune.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FineTune.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		79A607BC2F05C9E10008D52A /* FineTuneTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FineTuneTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -41,7 +50,25 @@
 		79B1000A2F35000000000001 /* IOBluetooth.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOBluetooth.framework; path = System/Library/Frameworks/IOBluetooth.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		2222667B2FBE4C8500BA59B4 /* Exceptions for "FineTuneDriver" folder in "FineTuneDriver" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				FineTuneDriver.c,
+			);
+			target = 222266722FBE4BB800BA59B4 /* FineTuneDriver */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		222266692FBE478800BA59B4 /* FineTuneDriver */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				2222667B2FBE4C8500BA59B4 /* Exceptions for "FineTuneDriver" folder in "FineTuneDriver" target */,
+			);
+			path = FineTuneDriver;
+			sourceTree = "<group>";
+		};
 		79A607B12F05C9E00008D52A /* FineTune */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = FineTune;
@@ -60,6 +87,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		222266702FBE4BB800BA59B4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		79A607AC2F05C9E00008D52A /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -102,6 +136,7 @@
 			isa = PBXGroup;
 			children = (
 				79A607B12F05C9E00008D52A /* FineTune */,
+				222266692FBE478800BA59B4 /* FineTuneDriver */,
 				79A607BF2F05C9E10008D52A /* FineTuneTests */,
 				79A607C92F05C9E10008D52A /* FineTuneUITests */,
 				79A607B02F05C9E00008D52A /* Products */,
@@ -116,6 +151,7 @@
 				79A607AF2F05C9E00008D52A /* FineTune.app */,
 				79A607BC2F05C9E10008D52A /* FineTuneTests.xctest */,
 				79A607C62F05C9E10008D52A /* FineTuneUITests.xctest */,
+				222266732FBE4BB800BA59B4 /* FineTuneDriver.driver */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -123,6 +159,25 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		222266722FBE4BB800BA59B4 /* FineTuneDriver */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 222266742FBE4BB800BA59B4 /* Build configuration list for PBXNativeTarget "FineTuneDriver" */;
+			buildPhases = (
+				2222666F2FBE4BB800BA59B4 /* Sources */,
+				222266702FBE4BB800BA59B4 /* Frameworks */,
+				222266712FBE4BB800BA59B4 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = FineTuneDriver;
+			packageProductDependencies = (
+			);
+			productName = FineTuneDriver;
+			productReference = 222266732FBE4BB800BA59B4 /* FineTuneDriver.driver */;
+			productType = "com.apple.product-type.bundle";
+		};
 		79A607AE2F05C9E00008D52A /* FineTune */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 79A607D02F05C9E10008D52A /* Build configuration list for PBXNativeTarget "FineTune" */;
@@ -134,6 +189,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				22C8F1E72FBE9D1300D5C00F /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				79A607B12F05C9E00008D52A /* FineTune */,
@@ -204,6 +260,9 @@
 				LastSwiftUpdateCheck = 2610;
 				LastUpgradeCheck = 2610;
 				TargetAttributes = {
+					222266722FBE4BB800BA59B4 = {
+						CreatedOnToolsVersion = 26.5;
+					};
 					79A607AE2F05C9E00008D52A = {
 						CreatedOnToolsVersion = 26.1.1;
 					};
@@ -238,6 +297,7 @@
 			projectRoot = "";
 			targets = (
 				79A607AE2F05C9E00008D52A /* FineTune */,
+				222266722FBE4BB800BA59B4 /* FineTuneDriver */,
 				79A607BB2F05C9E10008D52A /* FineTuneTests */,
 				79A607C52F05C9E10008D52A /* FineTuneUITests */,
 			);
@@ -245,11 +305,19 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		222266712FBE4BB800BA59B4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		79A607AD2F05C9E00008D52A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				7988AE522F1CC55900E6D086 /* fineTuneIcon.icon in Resources */,
+				222266732FBE4BB800BA59B5 /* FineTuneDriver.driver in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -270,6 +338,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		2222666F2FBE4BB800BA59B4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		79A607AB2F05C9E00008D52A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -294,6 +369,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		22C8F1E72FBE9D1300D5C00F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 222266722FBE4BB800BA59B4 /* FineTuneDriver */;
+			targetProxy = 22C8F1E62FBE9D1300D5C00F /* PBXContainerItemProxy */;
+		};
 		79A607BE2F05C9E10008D52A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 79A607AE2F05C9E00008D52A /* FineTune */;
@@ -307,6 +387,52 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		222266752FBE4BB800BA59B4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = A6486PJQ6C;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FineTuneDriver/Info.plist;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSPrincipalClass = "";
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Audio/Plug-Ins/HAL";
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.finetuneapp.FineTuneDriver;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				WRAPPER_EXTENSION = driver;
+			};
+			name = Debug;
+		};
+		222266762FBE4BB800BA59B4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = A6486PJQ6C;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FineTuneDriver/Info.plist;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSPrincipalClass = "";
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Audio/Plug-Ins/HAL";
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.finetuneapp.FineTuneDriver;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				WRAPPER_EXTENSION = driver;
+			};
+			name = Release;
+		};
 		79A607CE2F05C9E10008D52A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -433,12 +559,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = fineTuneIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = FineTune/FineTune.entitlements;
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
-				"DEVELOPMENT_TEAM[sdk=macosx*]" = "";
+				DEVELOPMENT_TEAM = A6486PJQ6C;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -471,12 +597,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = fineTuneIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = FineTune/FineTune.entitlements;
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
-				"DEVELOPMENT_TEAM[sdk=macosx*]" = "";
+				DEVELOPMENT_TEAM = A6486PJQ6C;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -588,6 +714,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		222266742FBE4BB800BA59B4 /* Build configuration list for PBXNativeTarget "FineTuneDriver" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				222266752FBE4BB800BA59B4 /* Debug */,
+				222266762FBE4BB800BA59B4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		79A607AA2F05C9E00008D52A /* Build configuration list for PBXProject "FineTune" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

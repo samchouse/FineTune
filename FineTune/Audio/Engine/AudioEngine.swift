@@ -16,6 +16,7 @@ final class AudioEngine {
     let autoEQProfileManager: AutoEQProfileManager
     let permission: AudioRecordingPermission
     let appListCoordinator: AppListCoordinator
+    let driverInstaller: DriverInstaller = .shared
 
     #if !APP_STORE
     let ddcController: DDCController
@@ -50,6 +51,9 @@ final class AudioEngine {
     private var healthMonitorTask: Task<Void, Never>?  // Periodic tap health monitor
     private var tapRecoveryCooldownUntil: [pid_t: Date] = [:]  // Prevents tap recreation thrashing
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioEngine")
+    private static let fineTuneVirtualOutputUID = "FineTune.VirtualOutput"
+    private var virtualOutputMasterVolume: Float = 1.0
+    private var virtualOutputMasterMuted = false
 
     // MARK: - Priority State Machine
 
@@ -74,7 +78,7 @@ final class AudioEngine {
     private let inputEchoTracker = EchoTracker(label: "Input")
 
     var outputDevices: [AudioDevice] {
-        deviceMonitor.outputDevices
+        deviceMonitor.outputDevices.filter { !Self.isFineTuneVirtualOutput($0.uid) }
     }
 
     func outputVolumeBackend(for deviceID: AudioDeviceID) -> VolumeControlTier {
@@ -86,7 +90,7 @@ final class AudioEngine {
     }
 
     /// Output devices sorted by user-defined priority order.
-    /// Devices in the priority list appear in that order; new/unknown devices are appended alphabetically.
+    /// Devices in the priority list appear in that order; new/unknown devices keep Core Audio order.
     var prioritySortedOutputDevices: [AudioDevice] {
         let devices = outputDevices
         let priorityOrder = settingsManager.devicePriorityOrder
@@ -102,10 +106,8 @@ final class AudioEngine {
             }
         }
 
-        // Append new devices alphabetically
-        let remaining = devices
-            .filter { !seen.contains($0.uid) }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        // Append new devices in the same order Core Audio reported them.
+        let remaining = devices.filter { !seen.contains($0.uid) }
         sorted.append(contentsOf: remaining)
 
         return sorted
@@ -126,9 +128,7 @@ final class AudioEngine {
             }
         }
 
-        let remaining = devices
-            .filter { !seen.contains($0.uid) }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let remaining = devices.filter { !seen.contains($0.uid) }
         sorted.append(contentsOf: remaining)
 
         return sorted
@@ -278,6 +278,7 @@ final class AudioEngine {
 
                 // Start device volume monitor AFTER deviceMonitor.start() populates devices
                 self.deviceVolumeMonitor.start()
+                self.syncVirtualOutputMasterState()
 
                 self.applyPersistedSettings()
                 self.registerNewDevicesInPriority()
@@ -319,6 +320,13 @@ final class AudioEngine {
         deviceVolumeMonitor.onVolumeChanged = { [weak self] deviceID, newVolume in
             guard let self else { return }
             guard let deviceUID = self.deviceMonitor.outputDevices.first(where: { $0.id == deviceID })?.uid else { return }
+            if Self.isFineTuneVirtualOutput(deviceUID) {
+                self.virtualOutputMasterVolume = newVolume
+                self.mirrorVirtualOutputVolumeToPlaybackDevice(newVolume)
+                self.refreshAllTapOutputStates()
+                return
+            }
+
             let loudnessEnabled = self.settingsManager.appSettings.loudnessCompensationEnabled
             for (_, tap) in self.taps {
                 if tap.currentDeviceUID == deviceUID {
@@ -338,6 +346,13 @@ final class AudioEngine {
         deviceVolumeMonitor.onMuteChanged = { [weak self] deviceID, isMuted in
             guard let self else { return }
             guard let deviceUID = self.deviceMonitor.outputDevices.first(where: { $0.id == deviceID })?.uid else { return }
+            if Self.isFineTuneVirtualOutput(deviceUID) {
+                self.virtualOutputMasterMuted = isMuted
+                self.mirrorVirtualOutputMuteToPlaybackDevice(isMuted)
+                self.refreshAllTapOutputStates()
+                return
+            }
+
             for (_, tap) in self.taps {
                 if tap.currentDeviceUID == deviceUID {
                     tap.isDeviceMuted = isMuted
@@ -349,9 +364,15 @@ final class AudioEngine {
             }
         }
 
-        processMonitor.onAppsChanged = { [weak self] apps in
-            self?.applyPersistedSettings()
-            self?.scheduleStaleCleanup()
+        processMonitor.onAppsChanged = { [weak self] _ in
+            guard let self else { return }
+            guard self.isFineTuneVirtualOutputDefault else {
+                self.suspendProcessingForNonFineTuneOutput()
+                self.scheduleStaleCleanup()
+                return
+            }
+            self.applyPersistedSettings()
+            self.scheduleStaleCleanup()
         }
 
         // Priority order closures — only for concrete AudioDeviceMonitor
@@ -375,6 +396,10 @@ final class AudioEngine {
         }
 
         deviceMonitor.onDeviceConnected = { [weak self] deviceUID, deviceName in
+            if Self.isFineTuneVirtualOutput(deviceUID) {
+                self?.syncVirtualOutputMasterState()
+                self?.refreshAllTapOutputStates()
+            }
             self?.handleDeviceConnected(deviceUID, name: deviceName)
             self?.bluetoothDeviceMonitor.notifyDeviceAppearedInCoreAudio()
         }
@@ -642,13 +667,11 @@ final class AudioEngine {
             ensureTapExists(for: app, deviceUID: deviceUID)
         }
         if let tap = taps[app.id] {
-            tap.volume = effectiveVolume(for: app.id, deviceUIDs: tap.currentDeviceUIDs)
-            if settingsManager.appSettings.loudnessCompensationEnabled {
-                tap.updateLoudnessCompensation(
-                    volume: effectiveLoudnessVolume(for: tap),
-                    enabled: true
-                )
-            }
+            applyTapOutputState(to: tap, for: app.id, deviceUIDs: tap.currentDeviceUIDs)
+            tap.updateLoudnessCompensation(
+                volume: effectiveLoudnessVolume(for: tap),
+                enabled: isFineTuneVirtualOutputDefault && settingsManager.appSettings.loudnessCompensationEnabled
+            )
         }
     }
 
@@ -661,7 +684,7 @@ final class AudioEngine {
     func setBoost(for app: AudioApp, to boost: BoostLevel) {
         volumeState.setBoost(for: app.id, to: boost, identifier: app.persistenceIdentifier)
         if let tap = taps[app.id] {
-            tap.volume = effectiveVolume(for: app.id, deviceUIDs: tap.currentDeviceUIDs)
+            applyTapOutputState(to: tap, for: app.id, deviceUIDs: tap.currentDeviceUIDs)
         }
     }
 
@@ -695,6 +718,11 @@ final class AudioEngine {
     }
 
     private func applyTapOutputState(to tap: any ProcessTapControlling, for pid: pid_t, deviceUIDs: [String]? = nil) {
+        guard isFineTuneVirtualOutputDefault else {
+            bypassTapProcessing(tap)
+            return
+        }
+
         let resolvedUIDs = deviceUIDs ?? tap.currentDeviceUIDs
         tap.volume = effectiveVolume(for: pid, deviceUIDs: resolvedUIDs)
         tap.isMuted = volumeState.getMute(for: pid)
@@ -709,10 +737,254 @@ final class AudioEngine {
         }
     }
 
+    private func bypassTapProcessing(_ tap: any ProcessTapControlling) {
+        tap.volume = 1.0
+        tap.isMuted = false
+        tap.currentDeviceVolume = 1.0
+        tap.isDeviceMuted = false
+        tap.updateEQSettings(.flat)
+        tap.updateAutoEQProfile(nil)
+        tap.setAutoEQPreampEnabled(false)
+        tap.updateLoudnessCompensation(volume: 1.0, enabled: false)
+        var loudnessEqSettings = LoudnessEqualizerSettings()
+        loudnessEqSettings.enabled = false
+        tap.updateLoudnessEqualization(loudnessEqSettings)
+    }
+
+    private func suspendProcessingForNonFineTuneOutput() {
+        guard !taps.isEmpty else {
+            appliedPIDs.removeAll()
+            return
+        }
+        for tap in taps.values {
+            bypassTapProcessing(tap)
+            tap.invalidate()
+        }
+        taps.removeAll()
+        appliedPIDs.removeAll()
+        logger.info("Suspended audio processing because FineTune Output is not the macOS default")
+    }
+
+    private func resumeProcessingForFineTuneOutput() {
+        guard isFineTuneVirtualOutputDefault else { return }
+        syncVirtualOutputMasterState()
+        applyPersistedSettings()
+        refreshAllTapOutputStates()
+    }
+
     private func refreshAllTapOutputStates() {
+        let loudnessEnabled = settingsManager.appSettings.loudnessCompensationEnabled
         for tap in taps.values {
             applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
+            tap.updateLoudnessCompensation(
+                volume: effectiveLoudnessVolume(for: tap),
+                enabled: isFineTuneVirtualOutputDefault && loudnessEnabled
+            )
         }
+    }
+
+    private static func isFineTuneVirtualOutput(_ uid: String) -> Bool {
+        uid == fineTuneVirtualOutputUID
+    }
+
+    var isFineTuneVirtualOutputDefault: Bool {
+        guard let uid = deviceVolumeMonitor.defaultDeviceUID else { return false }
+        return Self.isFineTuneVirtualOutput(uid)
+    }
+
+    var isFineTuneVirtualOutputAvailable: Bool {
+        fineTuneVirtualOutputDevice() != nil
+    }
+
+    var needsDriverUpdate: Bool {
+        driverInstaller.needsUpdate
+    }
+
+    func installDriver() async -> DriverInstaller.InstallationResult {
+        let result = await driverInstaller.install()
+        if case .success = result {
+            // Core Audio might take a moment to load the driver after restart
+            // The deviceMonitor should pick it up via its normal polling/notifications
+            logger.info("Driver installation requested successfully")
+        }
+        return result
+    }
+
+    @discardableResult
+    func switchSystemOutputToFineTuneVirtualOutput() -> Bool {
+        guard let device = fineTuneVirtualOutputDevice() else { return false }
+        let didSwitch = setDefaultOutputDevice(device.id)
+        if didSwitch {
+            resumeProcessingForFineTuneOutput()
+        }
+        return didSwitch
+    }
+
+    func isCurrentPlaybackOutput(_ device: AudioDevice) -> Bool {
+        if isFineTuneVirtualOutputDefault {
+            return device.uid == preferredPhysicalOutputUIDForVirtualDefault()
+        }
+        return device.id == deviceVolumeMonitor.defaultDeviceID
+    }
+
+    func setPlaybackOutputDevice(_ deviceID: AudioDeviceID) -> Bool {
+        guard let device = (deviceMonitor as? AudioDeviceMonitor)?.device(for: deviceID)
+            ?? outputDevices.first(where: { $0.id == deviceID }) else { return false }
+        guard !Self.isFineTuneVirtualOutput(device.uid) else { return false }
+
+        settingsManager.ensureDeviceInPriority(device.uid)
+        settingsManager.setLastPlaybackOutputDeviceUID(device.uid)
+        var order = settingsManager.devicePriorityOrder.filter { $0 != device.uid }
+        order.insert(device.uid, at: 0)
+        settingsManager.setDevicePriorityOrder(order)
+        routeFollowsDefaultApps(to: device.uid)
+        if isFineTuneVirtualOutputDefault {
+            restorePlaybackState(for: device)
+        }
+        return true
+    }
+
+    func setPlaybackOutputVolume(for deviceID: AudioDeviceID, to volume: Float) {
+        guard isFineTuneVirtualOutputDefault else {
+            deviceVolumeMonitor.setVolume(for: deviceID, to: volume)
+            return
+        }
+
+        guard let device = outputDevice(for: deviceID) else {
+            deviceVolumeMonitor.setVolume(for: deviceID, to: volume)
+            return
+        }
+
+        if Self.isFineTuneVirtualOutput(device.uid) {
+            virtualOutputMasterVolume = volume
+            deviceVolumeMonitor.setVolume(for: deviceID, to: volume)
+            mirrorVirtualOutputVolumeToPlaybackDevice(volume)
+            refreshAllTapOutputStates()
+            return
+        }
+
+        deviceVolumeMonitor.setVolume(for: deviceID, to: volume)
+        guard device.uid == preferredPhysicalOutputUIDForVirtualDefault(),
+              let virtualDevice = fineTuneVirtualOutputDevice() else { return }
+        settingsManager.setPlaybackDeviceVolume(for: device.uid, to: volume)
+        virtualOutputMasterVolume = volume
+        deviceVolumeMonitor.setVolume(for: virtualDevice.id, to: volume)
+        refreshAllTapOutputStates()
+    }
+
+    func setPlaybackOutputMute(for deviceID: AudioDeviceID, to muted: Bool) {
+        guard isFineTuneVirtualOutputDefault else {
+            deviceVolumeMonitor.setMute(for: deviceID, to: muted)
+            return
+        }
+
+        guard let device = outputDevice(for: deviceID) else {
+            deviceVolumeMonitor.setMute(for: deviceID, to: muted)
+            return
+        }
+
+        if Self.isFineTuneVirtualOutput(device.uid) {
+            virtualOutputMasterMuted = muted
+            deviceVolumeMonitor.setMute(for: deviceID, to: muted)
+            mirrorVirtualOutputMuteToPlaybackDevice(muted)
+            refreshAllTapOutputStates()
+            return
+        }
+
+        deviceVolumeMonitor.setMute(for: deviceID, to: muted)
+        guard device.uid == preferredPhysicalOutputUIDForVirtualDefault(),
+              let virtualDevice = fineTuneVirtualOutputDevice() else { return }
+        settingsManager.setPlaybackDeviceMuteState(for: device.uid, to: muted)
+        virtualOutputMasterMuted = muted
+        deviceVolumeMonitor.setMute(for: virtualDevice.id, to: muted)
+        refreshAllTapOutputStates()
+    }
+
+    private func syncVirtualOutputMasterState() {
+        guard let device = fineTuneVirtualOutputDevice() else {
+            virtualOutputMasterVolume = 1.0
+            virtualOutputMasterMuted = false
+            return
+        }
+
+        virtualOutputMasterVolume = deviceVolumeMonitor.volumes[device.id] ?? 1.0
+        virtualOutputMasterMuted = deviceVolumeMonitor.muteStates[device.id] ?? false
+    }
+
+    private func playbackOutputDeviceForVirtualDefault() -> AudioDevice? {
+        guard let uid = preferredPhysicalOutputUIDForVirtualDefault() else { return nil }
+        return deviceMonitor.device(for: uid)
+    }
+
+    private func outputDevice(for deviceID: AudioDeviceID) -> AudioDevice? {
+        outputDevices.first(where: { $0.id == deviceID }) ?? deviceMonitor.outputDevices.first(where: { $0.id == deviceID })
+    }
+
+    private func fineTuneVirtualOutputDevice() -> AudioDevice? {
+        deviceMonitor.outputDevices.first { Self.isFineTuneVirtualOutput($0.uid) }
+    }
+
+    private func mirrorVirtualOutputVolumeToPlaybackDevice(_ volume: Float) {
+        guard isFineTuneVirtualOutputDefault,
+              let device = playbackOutputDeviceForVirtualDefault() else { return }
+        settingsManager.setPlaybackDeviceVolume(for: device.uid, to: volume)
+        if deviceVolumeMonitor.volumes[device.id] == volume { return }
+        deviceVolumeMonitor.setVolume(for: device.id, to: volume)
+    }
+
+    private func mirrorVirtualOutputMuteToPlaybackDevice(_ muted: Bool) {
+        guard isFineTuneVirtualOutputDefault,
+              let device = playbackOutputDeviceForVirtualDefault() else { return }
+        settingsManager.setPlaybackDeviceMuteState(for: device.uid, to: muted)
+        if deviceVolumeMonitor.muteStates[device.id] == muted { return }
+        deviceVolumeMonitor.setMute(for: device.id, to: muted)
+    }
+
+    private func restorePlaybackState(for device: AudioDevice) {
+        let restoredVolume = settingsManager.getPlaybackDeviceVolume(for: device.uid)
+            ?? deviceVolumeMonitor.volumes[device.id]
+            ?? virtualOutputMasterVolume
+        let restoredMuted = settingsManager.getPlaybackDeviceMuteState(for: device.uid)
+            ?? deviceVolumeMonitor.muteStates[device.id]
+            ?? virtualOutputMasterMuted
+
+        settingsManager.setPlaybackDeviceVolume(for: device.uid, to: restoredVolume)
+        settingsManager.setPlaybackDeviceMuteState(for: device.uid, to: restoredMuted)
+        virtualOutputMasterVolume = restoredVolume
+        virtualOutputMasterMuted = restoredMuted
+
+        deviceVolumeMonitor.setVolume(for: device.id, to: restoredVolume)
+        deviceVolumeMonitor.setMute(for: device.id, to: restoredMuted)
+
+        if let virtualDevice = fineTuneVirtualOutputDevice() {
+            deviceVolumeMonitor.setVolume(for: virtualDevice.id, to: restoredVolume)
+            deviceVolumeMonitor.setMute(for: virtualDevice.id, to: restoredMuted)
+        }
+
+        refreshAllTapOutputStates()
+    }
+
+    private func preferredPhysicalOutputUIDForVirtualDefault() -> String? {
+        let physicalOutputs = outputDevices.filter { !Self.isFineTuneVirtualOutput($0.uid) }
+        if let lastUID = settingsManager.lastPlaybackOutputDeviceUID,
+           let device = physicalOutputs.first(where: { $0.uid == lastUID }),
+           isAliveCheck(device.id) {
+            return device.uid
+        }
+
+        return Self.resolveHighestPriority(
+            priorityOrder: settingsManager.devicePriorityOrder,
+            connectedDevices: physicalOutputs,
+            isAlive: isAliveCheck
+        )?.uid
+    }
+
+    private func playbackOutputUID(forDefaultUID defaultUID: String) -> String {
+        guard Self.isFineTuneVirtualOutput(defaultUID),
+              let physicalUID = preferredPhysicalOutputUIDForVirtualDefault() else {
+            return defaultUID
+        }
+        return physicalUID
     }
 
     func toggleMute(for app: AudioApp) {
@@ -737,7 +1009,9 @@ final class AudioEngine {
 
     func setMute(for app: AudioApp, to muted: Bool) {
         volumeState.setMute(for: app.id, to: muted, identifier: app.persistenceIdentifier)
-        taps[app.id]?.isMuted = muted
+        if let tap = taps[app.id] {
+            applyTapOutputState(to: tap, for: app.id, deviceUIDs: tap.currentDeviceUIDs)
+        }
     }
 
     func getMute(for app: AudioApp) -> Bool {
@@ -790,19 +1064,22 @@ final class AudioEngine {
     func setAutoEQPreampEnabled(_ enabled: Bool) {
         settingsManager.autoEQPreampEnabled = enabled
         for tap in taps.values {
-            tap.setAutoEQPreampEnabled(enabled)
+            tap.setAutoEQPreampEnabled(isFineTuneVirtualOutputDefault && enabled)
         }
     }
 
     func setLoudnessCompensationEnabled(_ enabled: Bool) {
         for tap in taps.values {
-            tap.updateLoudnessCompensation(volume: effectiveLoudnessVolume(for: tap), enabled: enabled)
+            tap.updateLoudnessCompensation(
+                volume: effectiveLoudnessVolume(for: tap),
+                enabled: isFineTuneVirtualOutputDefault && enabled
+            )
         }
     }
 
     func setLoudnessEqualizationEnabled(_ enabled: Bool) {
         var settings = LoudnessEqualizerSettings()
-        settings.enabled = enabled
+        settings.enabled = isFineTuneVirtualOutputDefault && enabled
         for tap in taps.values {
             tap.updateLoudnessEqualization(settings)
         }
@@ -839,6 +1116,10 @@ final class AudioEngine {
     /// Skips AutoEQ entirely for devices that don't support it (speakers, HDMI, etc.).
     /// If the profile isn't loaded yet, triggers an async fetch and applies when ready.
     private func applyAutoEQToTap(_ tap: any ProcessTapControlling) {
+        guard isFineTuneVirtualOutputDefault else {
+            tap.updateAutoEQProfile(nil)
+            return
+        }
         guard let deviceUID = tap.currentDeviceUID else { return }
 
         // Skip AutoEQ for non-headphone devices (or if device not found in monitor)
@@ -868,6 +1149,7 @@ final class AudioEngine {
         // Profile not loaded yet — fetch asynchronously
         tap.updateAutoEQProfile(nil)
         Task { @MainActor in
+            guard self.isFineTuneVirtualOutputDefault else { return }
             guard let profile = await autoEQProfileManager.resolveProfile(for: selection.profileID) else { return }
             // Verify tap still exists and is still routed to the same device
             guard tap.currentDeviceUID == deviceUID else { return }
@@ -932,8 +1214,9 @@ final class AudioEngine {
                 logger.warning("No default device available for \(app.name), will route when available")
                 return
             }
-            guard appDeviceRouting[app.id] != defaultUID else { return }
-            appDeviceRouting[app.id] = defaultUID
+            let playbackUID = playbackOutputUID(forDefaultUID: defaultUID)
+            guard appDeviceRouting[app.id] != playbackUID else { return }
+            appDeviceRouting[app.id] = playbackUID
         }
 
         // Switch tap if needed
@@ -1005,24 +1288,29 @@ final class AudioEngine {
 
     /// Updates tap configuration based on current mode and selected devices
     private func updateTapForCurrentMode(for app: AudioApp) async {
+        guard isFineTuneVirtualOutputDefault else {
+            suspendProcessingForNonFineTuneOutput()
+            return
+        }
+
         let mode = getDeviceSelectionMode(for: app)
 
         let deviceUIDs: [String]
         switch mode {
         case .single:
             if isFollowingDefault(for: app), let defaultUID = deviceVolumeMonitor.defaultDeviceUID {
-                deviceUIDs = [defaultUID]
+                deviceUIDs = [playbackOutputUID(forDefaultUID: defaultUID)]
             } else if let deviceUID = appDeviceRouting[app.id] {
                 deviceUIDs = [deviceUID]
             } else if let defaultUID = deviceVolumeMonitor.defaultDeviceUID {
-                deviceUIDs = [defaultUID]
+                deviceUIDs = [playbackOutputUID(forDefaultUID: defaultUID)]
             } else {
                 logger.warning("No device available for \(app.name) in single mode")
                 return
             }
 
         case .multi:
-            let selectedUIDs = getSelectedDeviceUIDs(for: app).sorted()
+            let selectedUIDs = sortedOutputUIDs(getSelectedDeviceUIDs(for: app))
             if selectedUIDs.isEmpty {
                 return
             }
@@ -1050,6 +1338,7 @@ final class AudioEngine {
 
     /// Creates a tap with the specified device UIDs
     private func ensureTapWithDevices(for app: AudioApp, deviceUIDs: [String]) {
+        guard isFineTuneVirtualOutputDefault else { return }
         guard !deviceUIDs.isEmpty else { return }
         guard taps[app.id] == nil else { return }
         guard permission.status == .authorized else { return }
@@ -1080,6 +1369,10 @@ final class AudioEngine {
 
     func applyPersistedSettings() {
         guard permission.status == .authorized else { return }
+        guard isFineTuneVirtualOutputDefault else {
+            suspendProcessingForNonFineTuneOutput()
+            return
+        }
 
         // Warm the AutoEQ cache for every (app, device) selection so that subsequent
         // tap activations can apply correction synchronously inside activate(initial:)
@@ -1099,7 +1392,7 @@ final class AudioEngine {
 
         for app in apps {
             guard !appliedPIDs.contains(app.id) else { continue }
-            guard !settingsManager.isIgnored(app.persistenceIdentifier) else { continue }
+            guard !appListCoordinator.isIgnored(identifier: app.persistenceIdentifier) else { continue }
 
             // Load saved device selection mode (single vs multi)
             let savedMode = volumeState.loadSavedDeviceSelectionMode(for: app.id, identifier: app.persistenceIdentifier)
@@ -1115,8 +1408,7 @@ final class AudioEngine {
                 if let savedUIDs = volumeState.loadSavedSelectedDeviceUIDs(for: app.id, identifier: app.persistenceIdentifier),
                    !savedUIDs.isEmpty {
                     // Filter to currently available devices, maintaining deterministic order
-                    let availableUIDs = savedUIDs.filter { deviceMonitor.device(for: $0) != nil }
-                        .sorted()  // Deterministic ordering
+                    let availableUIDs = sortedOutputUIDs(savedUIDs.filter { deviceMonitor.device(for: $0) != nil })
                     if !availableUIDs.isEmpty {
                         logger.debug("Restoring multi-device mode for \(app.name) with \(availableUIDs.count) device(s)")
                         ensureTapWithDevices(for: app, deviceUIDs: availableUIDs)
@@ -1152,7 +1444,7 @@ final class AudioEngine {
                     logger.warning("No default device available for \(app.name), deferring setup")
                     continue
                 }
-                deviceUID = defaultUID
+                deviceUID = playbackOutputUID(forDefaultUID: defaultUID)
                 logger.debug("App \(app.name) follows system default: \(deviceUID)")
             } else if let savedDeviceUID = settingsManager.getDeviceRouting(for: app.persistenceIdentifier),
                       deviceMonitor.device(for: savedDeviceUID) != nil {
@@ -1167,7 +1459,7 @@ final class AudioEngine {
                     logger.warning("No default device for \(app.name), deferring setup")
                     continue
                 }
-                deviceUID = defaultUID
+                deviceUID = playbackOutputUID(forDefaultUID: defaultUID)
                 logger.debug("App \(app.name) device temporarily unavailable, using default: \(deviceUID)")
             }
             appDeviceRouting[app.id] = deviceUID
@@ -1212,6 +1504,7 @@ final class AudioEngine {
     }
 
     private func ensureTapExists(for app: AudioApp, deviceUID: String) {
+        guard isFineTuneVirtualOutputDefault else { return }
         guard taps[app.id] == nil else { return }
         guard permission.status == .authorized else { return }
 
@@ -1306,10 +1599,11 @@ final class AudioEngine {
     /// Routes all followsDefault apps to the given device UID and switches their taps.
     /// Early-exits if all apps are already routed to the target (avoids unnecessary tap switches).
     private func routeFollowsDefaultApps(to targetUID: String) {
-        guard !followsDefault.allSatisfy({ appDeviceRouting[$0] == targetUID }) else { return }
+        let playbackUID = playbackOutputUID(forDefaultUID: targetUID)
+        guard !followsDefault.allSatisfy({ appDeviceRouting[$0] == playbackUID }) else { return }
 
         for pid in followsDefault {
-            appDeviceRouting[pid] = targetUID
+            appDeviceRouting[pid] = playbackUID
         }
 
         var tapsToSwitch: [(app: AudioApp, tap: any ProcessTapControlling)] = []
@@ -1322,12 +1616,12 @@ final class AudioEngine {
         Task {
             for (app, tap) in tapsToSwitch {
                 do {
-                    let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [targetUID], isFollowsDefault: true)
-                    try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
-                    self.applyTapOutputState(to: tap, for: app.id, deviceUIDs: [targetUID])
+                    let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [playbackUID], isFollowsDefault: true)
+                    try await tap.switchDevice(to: playbackUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
+                    self.applyTapOutputState(to: tap, for: app.id, deviceUIDs: [playbackUID])
                     self.applyAutoEQToTap(tap)
                 } catch {
-                    self.logger.error("Failed to switch \(app.name) to \(targetUID): \(error.localizedDescription)")
+                    self.logger.error("Failed to switch \(app.name) to \(playbackUID): \(error.localizedDescription)")
                 }
             }
         }
@@ -1372,7 +1666,7 @@ final class AudioEngine {
 
             if mode == .multi && tap.currentDeviceUIDs.count > 1 {
                 // Multi-device mode: remove disconnected device, keep others
-                let remainingUIDs = tap.currentDeviceUIDs.filter { $0 != deviceUID }.sorted()
+                let remainingUIDs = sortedOutputUIDs(tap.currentDeviceUIDs.filter { $0 != deviceUID })
                 if !remainingUIDs.isEmpty {
                     multiModeTapsToUpdate.append((tap: tap, remainingUIDs: remainingUIDs))
                     // Update in-memory selection to remove disconnected device (don't persist)
@@ -1684,6 +1978,11 @@ final class AudioEngine {
             // create echoes. Consuming before Case 1 ensures FineTune UI changes aren't
             // mistaken for macOS auto-switches.
             if outputEchoTracker.consume(newDefaultUID) {
+                if Self.isFineTuneVirtualOutput(newDefaultUID) {
+                    resumeProcessingForFineTuneOutput()
+                } else {
+                    suspendProcessingForNonFineTuneOutput()
+                }
                 return
             }
 
@@ -1697,7 +1996,11 @@ final class AudioEngine {
                     outputPriorityState = .stable
                     lastConfirmedDefaultUID = newDefaultUID
                     lastAutoSwitchOverrideTime = nil
-                    routeFollowsDefaultApps(to: newDefaultUID)
+                    if Self.isFineTuneVirtualOutput(newDefaultUID) {
+                        resumeProcessingForFineTuneOutput()
+                    } else {
+                        suspendProcessingForNonFineTuneOutput()
+                    }
                     let deviceName = deviceMonitor.device(for: newDefaultUID)?.name ?? newDefaultUID
                     logger.info("Accepted user change to \(deviceName) (settled >1s)")
                     return
@@ -1734,6 +2037,11 @@ final class AudioEngine {
 
         // Suppress echo from our own priority-based override (when not in pendingAutoSwitch)
         if outputEchoTracker.consume(newDefaultUID) {
+            if Self.isFineTuneVirtualOutput(newDefaultUID) {
+                resumeProcessingForFineTuneOutput()
+            } else {
+                suspendProcessingForNonFineTuneOutput()
+            }
             return
         }
 
@@ -1743,33 +2051,24 @@ final class AudioEngine {
             return
         }
 
-        // Check if the new default device is known and alive.
-        guard let newDevice = deviceMonitor.device(for: newDefaultUID) else {
-            // Device not yet in monitor's list (e.g., BT device default-changed before device-list
-            // notification). Defer — the upcoming handleDeviceConnected will enforce priority.
-            logger.debug("Default changed to unknown device \(newDefaultUID), deferring to device list refresh")
+        if Self.isFineTuneVirtualOutput(newDefaultUID) {
+            lastConfirmedDefaultUID = newDefaultUID
+            resumeProcessingForFineTuneOutput()
+
+            if let physicalUID = preferredPhysicalOutputUIDForVirtualDefault() {
+                routeFollowsDefaultApps(to: physicalUID)
+                let deviceName = deviceMonitor.device(for: physicalUID)?.name ?? physicalUID
+                logger.info("Default changed to FineTune Output; routing follows-default apps to \(deviceName)")
+            } else {
+                logger.warning("Default changed to FineTune Output, but no physical output is available for playback")
+            }
             return
         }
 
-        let newDeviceIsAlive = isAliveCheck(newDevice.id)
-
-        if !newDeviceIsAlive {
-            // Dead device became default (race with disconnect) — override to priority fallback
-            reEvaluateOutputDefault()
-        } else {
-            // Genuine change to a live device — route followsDefault apps
-            lastConfirmedDefaultUID = newDefaultUID
-            routeFollowsDefaultApps(to: newDefaultUID)
-
-            let affectedApps = apps.filter { followsDefault.contains($0.id) }
-            if !affectedApps.isEmpty {
-                let deviceName = deviceMonitor.device(for: newDefaultUID)?.name ?? "Default Output"
-                logger.info("Default changed to \(deviceName), \(affectedApps.count) app(s) following")
-                if settingsManager.appSettings.showDeviceDisconnectAlerts {
-                    showDefaultChangedNotification(newDeviceName: deviceName, affectedApps: affectedApps)
-                }
-            }
-        }
+        suspendProcessingForNonFineTuneOutput()
+        lastConfirmedDefaultUID = newDefaultUID
+        logger.info("Default changed away from FineTune Output; app controls and audio processing are disabled")
+        return
     }
 
     private func showDefaultChangedNotification(newDeviceName: String, affectedApps: [AudioApp]) {
@@ -1799,6 +2098,22 @@ final class AudioEngine {
         guard isFollowsDefault else { return nil }
         guard let defaultUID = deviceVolumeMonitor.defaultDeviceUID else { return nil }
         return outputUIDs.contains(defaultUID) ? defaultUID : nil
+    }
+
+    private func sortedOutputUIDs<S: Sequence>(_ uids: S) -> [String] where S.Element == String {
+        let requested = Set(uids)
+        guard !requested.isEmpty else { return [] }
+
+        var sorted = outputDevices
+            .map(\.uid)
+            .filter { requested.contains($0) }
+
+        let known = Set(sorted)
+        let remaining = requested
+            .subtracting(known)
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        sorted.append(contentsOf: remaining)
+        return sorted
     }
 
     private func cleanupStaleTaps() {

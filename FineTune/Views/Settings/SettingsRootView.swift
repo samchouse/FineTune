@@ -6,9 +6,6 @@ struct SettingsRootView: View {
     @Bindable var settings: SettingsManager
     @Bindable var audioEngine: AudioEngine
     @Bindable var deviceVolumeMonitor: DeviceVolumeMonitor
-    @Bindable var accessibility: AccessibilityPermissionService
-    @Bindable var mediaKeyStatus: MediaKeyStatus
-    let mediaKeyMonitor: MediaKeyMonitor
     let shortcutsRegistry: ShortcutsRegistry
     @ObservedObject var updateManager: UpdateManager
 
@@ -41,9 +38,6 @@ struct SettingsRootView: View {
 
             ShortcutsTab(
                 settings: settings,
-                accessibility: accessibility,
-                mediaKeyStatus: mediaKeyStatus,
-                mediaKeyMonitor: mediaKeyMonitor,
                 shortcutsRegistry: shortcutsRegistry
             )
             .tabItem { Label("Shortcuts", systemImage: "command") }

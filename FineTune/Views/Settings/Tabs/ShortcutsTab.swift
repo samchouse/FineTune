@@ -5,16 +5,12 @@ import KeyboardShortcuts
 @MainActor
 struct ShortcutsTab: View {
     @Bindable var settings: SettingsManager
-    @Bindable var accessibility: AccessibilityPermissionService
-    @Bindable var mediaKeyStatus: MediaKeyStatus
-    let mediaKeyMonitor: MediaKeyMonitor
     let shortcutsRegistry: ShortcutsRegistry
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 volumeSection
-                mediaKeysSection
                 hotkeysSection
             }
             .padding(.horizontal, 20)
@@ -22,9 +18,6 @@ struct ShortcutsTab: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.never)
-        .onChange(of: settings.appSettings.mediaKeyControlEnabled) { _, _ in
-            mediaKeyMonitor.reconcile()
-        }
     }
 
     // MARK: - Volume
@@ -33,7 +26,7 @@ struct ShortcutsTab: View {
         SettingsSection("Volume") {
             SettingsRow(
                 "Volume Step",
-                description: "How much each keypress changes the volume. Applies to media keys, configured hotkeys, and arrow-key nav in the popup."
+                description: "How much each keypress changes the volume. Applies to configured hotkeys and arrow-key nav in the popup."
             ) {
                 Picker("", selection: $settings.appSettings.volumeHotkeyStep) {
                     ForEach(VolumeHotkeyStep.allCases) { step in
@@ -44,47 +37,13 @@ struct ShortcutsTab: View {
                 .labelsHidden()
                 .fixedSize()
             }
-        }
-    }
 
-    // MARK: - Media Keys
-
-    private var mediaKeysSection: some View {
-        SettingsSection("Media Keys") {
+            SettingsRowDivider()
             SettingsRow(
-                "Media Keys Control",
-                description: "Use F11/F12 (or volume keys) to control FineTune"
+                "HUD Style",
+                description: "How the volume indicator appears for volume hotkeys"
             ) {
-                Toggle("", isOn: $settings.appSettings.mediaKeyControlEnabled)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
-            }
-
-            if !accessibility.isTrustedCached {
-                SettingsRowDivider()
-                AccessibilityPromptStrip(accessibility: accessibility)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-            }
-
-            if mediaKeyStatus.isOffline {
-                SettingsRowDivider()
-                MediaKeyOfflineCard {
-                    mediaKeyMonitor.reconcile()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            }
-
-            if settings.appSettings.mediaKeyControlEnabled && accessibility.isTrustedCached {
-                SettingsRowDivider()
-                SettingsRow(
-                    "HUD Style",
-                    description: "How the volume indicator appears"
-                ) {
-                    HUDStyleSegmentedControl(selection: $settings.appSettings.hudStyle)
-                }
+                HUDStyleSegmentedControl(selection: $settings.appSettings.hudStyle)
             }
         }
     }

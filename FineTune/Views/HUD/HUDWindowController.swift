@@ -5,9 +5,8 @@ import os
 
 /// Owns the on-screen volume HUD panel and its auto-hide timing.
 @MainActor
-final class HUDWindowController: MediaKeyHUDPresenting {
+final class HUDWindowController {
     private let settingsManager: SettingsManager
-    private let mediaKeyStatus: MediaKeyStatus
     private let popupVisibility: PopupVisibilityService
     private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "HUDWindowController")
 
@@ -19,11 +18,6 @@ final class HUDWindowController: MediaKeyHUDPresenting {
     /// Slider fraction in [0, 1]. The wiring site converts to gain using the current device's tier.
     var volumeWriter: ((Double) -> Void)?
 
-    // MARK: - Suppression-degraded tracking
-
-    private var lastSwallowedKeyTime: DispatchTime?
-    private var settingsChangedObserver: NSObjectProtocol?
-
     var hideDelayOverride: Duration?
     var frameProvider: () -> NSRect? = { NSScreen.main?.visibleFrame ?? NSScreen.screens.first?.visibleFrame }
     private(set) var showCallCount: Int = 0
@@ -31,19 +25,13 @@ final class HUDWindowController: MediaKeyHUDPresenting {
 
     init(
         settingsManager: SettingsManager,
-        mediaKeyStatus: MediaKeyStatus,
         popupVisibility: PopupVisibilityService
     ) {
         self.settingsManager = settingsManager
-        self.mediaKeyStatus = mediaKeyStatus
         self.popupVisibility = popupVisibility
-        subscribeToSettingsChangedNotification()
     }
 
     isolated deinit {
-        if let observer = settingsChangedObserver {
-            DistributedNotificationCenter.default().removeObserver(observer)
-        }
         // Prefer shutdown() for synchronous teardown during willTerminate; this
         // deinit safety-net only fires for objects released without that call.
         if let panel {
@@ -233,11 +221,6 @@ final class HUDWindowController: MediaKeyHUDPresenting {
         postPerAppAccessibilityAnnouncement(panel: panel, title: title, content: content)
     }
 
-    /// Called when the monitor swallows a keypress; used to detect if the native HUD still fired.
-    func swallowObserved() {
-        lastSwallowedKeyTime = DispatchTime.now()
-    }
-
     func hide() {
         hideTask?.cancel()
         hideTask = nil
@@ -254,25 +237,17 @@ final class HUDWindowController: MediaKeyHUDPresenting {
 
     // MARK: - Position Math
 
-    /// Tahoe: top-right. Classic: bottom-center. Under suppression-degraded,
-    /// Tahoe shifts left so it doesn't overlap the native top-right HUD.
+    /// Tahoe: top-right. Classic: bottom-center.
     static func computePosition(
         style: HUDStyle,
         size: NSSize,
-        visibleFrame: NSRect,
-        suppressionDegraded: Bool
+        visibleFrame: NSRect
     ) -> NSPoint {
         switch style {
         case .tahoe:
-            if suppressionDegraded {
-                let x = visibleFrame.minX + visibleFrame.width * 0.25 - size.width / 2
-                let y = visibleFrame.maxY - size.height - 8
-                return NSPoint(x: x, y: y)
-            } else {
-                let x = visibleFrame.maxX - size.width - 8
-                let y = visibleFrame.maxY - size.height - 8
-                return NSPoint(x: x, y: y)
-            }
+            let x = visibleFrame.maxX - size.width - 8
+            let y = visibleFrame.maxY - size.height - 8
+            return NSPoint(x: x, y: y)
         case .classic:
             let x = visibleFrame.midX - size.width / 2
             let y = visibleFrame.minY + 140
@@ -285,8 +260,7 @@ final class HUDWindowController: MediaKeyHUDPresenting {
         return Self.computePosition(
             style: style,
             size: size,
-            visibleFrame: frame,
-            suppressionDegraded: mediaKeyStatus.suppressionDegraded
+            visibleFrame: frame
         )
     }
 
@@ -408,29 +382,6 @@ final class HUDWindowController: MediaKeyHUDPresenting {
         return false
     }
 
-    // MARK: - Suppression-degraded detection
-
-    private func subscribeToSettingsChangedNotification() {
-        settingsChangedObserver = DistributedNotificationCenter.default().addObserver(
-            forName: Notification.Name("com.apple.sound.settingsChangedNotification"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.handleSettingsChangedNotification()
-            }
-        }
-    }
-
-    private func handleSettingsChangedNotification() {
-        guard let lastSwallow = lastSwallowedKeyTime else { return }
-        let elapsed = DispatchTime.now().uptimeNanoseconds &- lastSwallow.uptimeNanoseconds
-        let elapsedMs = elapsed / 1_000_000
-        if elapsedMs <= 500 && !mediaKeyStatus.suppressionDegraded {
-            mediaKeyStatus.suppressionDegraded = true
-            logger.warning("Suppression degraded: native sound handler fired within \(elapsedMs)ms of our swallow")
-        }
-    }
 }
 
 // MARK: - Per-app HUD content

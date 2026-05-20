@@ -88,8 +88,7 @@ struct AppearancePreferenceCodableTests {
           "defaultNewAppVolume": 1.0,
           "lockInputDevice": true,
           "showDeviceDisconnectAlerts": true,
-          "hudStyle": "tahoe",
-          "mediaKeyControlEnabled": true
+          "hudStyle": "tahoe"
         }
         """
         let data = Data(json.utf8)

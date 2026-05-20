@@ -133,6 +133,6 @@ struct AudioTab: View {
     }
 
     private func updateSortedDevices() {
-        sortedOutputDevices = audioEngine.prioritySortedOutputDevices
+        sortedOutputDevices = audioEngine.outputDevices
     }
 }

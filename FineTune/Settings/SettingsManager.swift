@@ -40,9 +40,8 @@ nonisolated struct AppSettings: Codable, Equatable {
     var loudnessCompensationEnabled: Bool = false  // ISO 226:2023 equal-loudness contour compensation
     var loudnessEqualizationEnabled: Bool = false  // Real-time loudness equalization
 
-    // Media Keys & HUD
+    // Volume Hotkeys & HUD
     var hudStyle: HUDStyle = .tahoe                // Visual style of the volume HUD
-    var mediaKeyControlEnabled: Bool = true        // Intercept F10/F11/F12 to drive the default output device
     var volumeHotkeyStep: VolumeHotkeyStep = .normal  // Slider-domain step per keypress; user-configurable
 
     // Global Hotkeys
@@ -73,7 +72,6 @@ nonisolated struct AppSettings: Codable, Equatable {
         loudnessCompensationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessCompensationEnabled) ?? false
         loudnessEqualizationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessEqualizationEnabled) ?? false
         hudStyle = try c.decodeIfPresent(HUDStyle.self, forKey: .hudStyle) ?? .tahoe
-        mediaKeyControlEnabled = try c.decodeIfPresent(Bool.self, forKey: .mediaKeyControlEnabled) ?? true
         volumeHotkeyStep = try c.decodeIfPresent(VolumeHotkeyStep.self, forKey: .volumeHotkeyStep) ?? .normal
         customShortcuts = try c.decodeIfPresent([String: ShortcutCodable].self, forKey: .customShortcuts) ?? [:]
         appearance = try c.decodeIfPresent(AppearancePreference.self, forKey: .appearance) ?? .system
@@ -118,6 +116,12 @@ final class SettingsManager {
         var softwareDeviceVolumes: [String: Float] = [:]      // device UID → visible volume (0.0-1.0)
         var softwareDeviceMuteStates: [String: Bool] = [:]    // device UID → software mute state
         var softwareDeviceSavedVolumes: [String: Float] = [:] // device UID → volume before mute
+
+        // FineTune playback target volume/mute, keyed by physical output UID.
+        // Used when FineTune Output is the macOS default and FineTune owns routing.
+        var lastPlaybackOutputDeviceUID: String? = nil
+        var playbackDeviceVolumes: [String: Float] = [:]
+        var playbackDeviceMuteStates: [String: Bool] = [:]
 
         // Per-device volume control tier override (overrides auto-detection).
         // nil/missing → auto-detect (hardware/ddc/software). Populated only by
@@ -177,6 +181,11 @@ final class SettingsManager {
             softwareDeviceSavedVolumes = (try c.decodeIfPresent([String: Float].self, forKey: .softwareDeviceSavedVolumes) ?? [:])
                 .filter { $0.value.isFinite && $0.value >= 0 }
                 .mapValues { min($0, 1.0) }
+            lastPlaybackOutputDeviceUID = try c.decodeIfPresent(String.self, forKey: .lastPlaybackOutputDeviceUID)
+            playbackDeviceVolumes = (try c.decodeIfPresent([String: Float].self, forKey: .playbackDeviceVolumes) ?? [:])
+                .filter { $0.value.isFinite && $0.value >= 0 }
+                .mapValues { min($0, 1.0) }
+            playbackDeviceMuteStates = try c.decodeIfPresent([String: Bool].self, forKey: .playbackDeviceMuteStates) ?? [:]
             deviceVolumeTierOverride = try c.decodeIfPresent([String: VolumeControlTier].self, forKey: .deviceVolumeTierOverride) ?? [:]
             outputDevicePriority = try c.decodeIfPresent([String].self, forKey: .outputDevicePriority) ?? []
             inputDevicePriority = try c.decodeIfPresent([String].self, forKey: .inputDevicePriority) ?? []
@@ -422,6 +431,35 @@ final class SettingsManager {
 
     func setSoftwareDeviceSavedVolume(for deviceUID: String, to volume: Float) {
         settings.softwareDeviceSavedVolumes[deviceUID] = normalizedDeviceVolume(volume)
+        scheduleSave()
+    }
+
+    // MARK: - FineTune Playback Device Volume
+
+    func getPlaybackDeviceVolume(for deviceUID: String) -> Float? {
+        settings.playbackDeviceVolumes[deviceUID]
+    }
+
+    func setPlaybackDeviceVolume(for deviceUID: String, to volume: Float) {
+        settings.playbackDeviceVolumes[deviceUID] = normalizedDeviceVolume(volume)
+        scheduleSave()
+    }
+
+    func getPlaybackDeviceMuteState(for deviceUID: String) -> Bool? {
+        settings.playbackDeviceMuteStates[deviceUID]
+    }
+
+    func setPlaybackDeviceMuteState(for deviceUID: String, to muted: Bool) {
+        settings.playbackDeviceMuteStates[deviceUID] = muted
+        scheduleSave()
+    }
+
+    var lastPlaybackOutputDeviceUID: String? {
+        settings.lastPlaybackOutputDeviceUID
+    }
+
+    func setLastPlaybackOutputDeviceUID(_ uid: String?) {
+        settings.lastPlaybackOutputDeviceUID = uid
         scheduleSave()
     }
 
@@ -824,6 +862,9 @@ final class SettingsManager {
         settings.softwareDeviceVolumes.removeAll()
         settings.softwareDeviceMuteStates.removeAll()
         settings.softwareDeviceSavedVolumes.removeAll()
+        settings.lastPlaybackOutputDeviceUID = nil
+        settings.playbackDeviceVolumes.removeAll()
+        settings.playbackDeviceMuteStates.removeAll()
         settings.deviceVolumeTierOverride.removeAll()
         settings.outputDevicePriority.removeAll()
         settings.inputDevicePriority.removeAll()

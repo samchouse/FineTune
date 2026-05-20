@@ -27,6 +27,7 @@ struct DeviceRow: View {
     let onSetDefault: () -> Void
     let onVolumeChange: (Float) -> Void
     let onMuteToggle: () -> Void
+    let isEnabled: Bool
 
     // AutoEQ (all optional — existing call sites work without them)
     let autoEQProfileName: String?
@@ -72,6 +73,7 @@ struct DeviceRow: View {
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteToggle: @escaping () -> Void,
+        isEnabled: Bool = true,
         autoEQProfileName: String? = nil,
         autoEQEnabled: Bool = false,
         onAutoEQToggle: ((Bool) -> Void)? = nil,
@@ -94,6 +96,7 @@ struct DeviceRow: View {
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
         self.onMuteToggle = onMuteToggle
+        self.isEnabled = isEnabled
         self.autoEQProfileName = autoEQProfileName
         self.autoEQEnabled = autoEQEnabled
         self.onAutoEQToggle = onAutoEQToggle
@@ -114,6 +117,7 @@ struct DeviceRow: View {
         deviceHeader
             .contentShape(Rectangle())
             .onTapGesture {
+                guard isEnabled else { return }
                 // Whole-row tap sets this device as default. Inner controls
                 // (volume slider, mute button, AutoEQ picker, percent field)
                 // are Button/Slider/TextField subviews that capture their
@@ -123,6 +127,8 @@ struct DeviceRow: View {
                     onSetDefault()
                 }
             }
+            .disabled(!isEnabled)
+            .opacity(isEnabled ? 1.0 : 0.45)
             .hoverableRow(isFocused: isFocused)
     }
 

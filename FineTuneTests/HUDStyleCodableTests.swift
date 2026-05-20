@@ -49,22 +49,14 @@ struct HUDStyleCodableTests {
         #expect(settings.hudStyle == .tahoe)
     }
 
-    @Test("AppSettings.mediaKeyControlEnabled defaults to true")
-    func appSettingsMediaKeyControlDefault() {
-        let settings = AppSettings()
-        #expect(settings.mediaKeyControlEnabled == true)
-    }
-
     @Test("AppSettings with hudStyle=classic round-trips through JSON")
     @MainActor
     func appSettingsHUDStyleRoundTrip() throws {
         var settings = AppSettings()
         settings.hudStyle = .classic
-        settings.mediaKeyControlEnabled = false
         let data = try JSONEncoder().encode(settings)
         let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
         #expect(decoded.hudStyle == .classic)
-        #expect(decoded.mediaKeyControlEnabled == false)
     }
 
     @Test("Decoding AppSettings without hudStyle key produces .tahoe default")
@@ -84,7 +76,6 @@ struct HUDStyleCodableTests {
         let data = Data(json.utf8)
         let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
         #expect(decoded.hudStyle == .tahoe)
-        #expect(decoded.mediaKeyControlEnabled == true)
     }
 
     @Test("SettingsManager.Settings round-trip preserves hudStyle")

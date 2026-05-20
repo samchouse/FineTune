@@ -206,13 +206,13 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
             }
 
             // Update output devices
-            outputDevices = outputDeviceList.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            outputDevices = outputDeviceList
             knownDeviceUIDs = Set(outputDeviceList.map(\.uid))
             devicesByUID = Dictionary(uniqueKeysWithValues: outputDevices.map { ($0.uid, $0) })
             devicesByID = Dictionary(uniqueKeysWithValues: outputDevices.map { ($0.id, $0) })
 
             // Update input devices
-            inputDevices = inputDeviceList.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            inputDevices = inputDeviceList
             knownInputDeviceUIDs = Set(inputDeviceList.map(\.uid))
             inputDevicesByUID = Dictionary(uniqueKeysWithValues: inputDevices.map { ($0.uid, $0) })
             inputDevicesByID = Dictionary(uniqueKeysWithValues: inputDevices.map { ($0.id, $0) })

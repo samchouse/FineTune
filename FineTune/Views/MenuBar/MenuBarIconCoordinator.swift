@@ -5,21 +5,17 @@
 // was set to "FineTune" by the library, and crossfade images directly.
 
 import AppKit
-import AudioToolbox
 import Observation
 import os
 
 @MainActor
-final class MenuBarIconCoordinator: MediaKeyIconFlashing {
+final class MenuBarIconCoordinator {
     private let deviceVolumeMonitor: DeviceVolumeMonitor
     private let deviceProvider: any AudioDeviceProviding
     private let settings: SettingsManager
     private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "MenuBarIconCoordinator")
 
     private weak var cachedButton: NSStatusBarButton?
-    private var flashWorkItem: DispatchWorkItem?
-    private var flashActiveSymbol: String?
-    private var lastObservedDeviceID: AudioDeviceID?
     private var started = false
 
     init(
@@ -37,47 +33,18 @@ final class MenuBarIconCoordinator: MediaKeyIconFlashing {
     func start() {
         guard !started else { return }
         started = true
-        lastObservedDeviceID = deviceVolumeMonitor.defaultDeviceID
         attemptInitialApply(retriesLeft: 20)
         scheduleApplyTracking()
-        scheduleDeviceChangeTracking()
     }
 
     /// Cancel pending work and drop references. Called on app termination.
     func stop() {
-        flashWorkItem?.cancel()
-        flashWorkItem = nil
         cachedButton = nil
-    }
-
-    /// Transient device-icon flash. Applies to every style; fires on media keys and device changes.
-    /// If the same symbol is already flashing, extends the timer rather than restarting the fade —
-    /// prevents mid-fade pops when device-change and media-key triggers coincide.
-    func flashDevice() {
-        let symbol = currentDeviceSymbol()
-        let alreadyShowingSame = (flashActiveSymbol == symbol)
-        flashActiveSymbol = symbol
-        if !alreadyShowingSame {
-            apply()
-        }
-
-        flashWorkItem?.cancel()
-        let duration = flashDuration()
-        let item = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.flashActiveSymbol = nil
-            self.apply()
-        }
-        flashWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: item)
     }
 
     // MARK: - State
 
     private func computeState() -> MenuBarIconState {
-        if let symbol = flashActiveSymbol {
-            return .deviceFlash(symbol: symbol)
-        }
         let id = deviceVolumeMonitor.defaultDeviceID
         let volume = deviceVolumeMonitor.volumes[id] ?? 0
         let muted = deviceVolumeMonitor.muteStates[id] ?? false
@@ -95,11 +62,6 @@ final class MenuBarIconCoordinator: MediaKeyIconFlashing {
             outputDevices: deviceProvider.outputDevices,
             defaultDeviceID: deviceVolumeMonitor.defaultDeviceID
         )
-    }
-
-    private func flashDuration() -> TimeInterval {
-        // Matches HUDWindowController.hideDelay so the icon and HUD fade in lockstep.
-        return 1.1
     }
 
     // MARK: - Apply
@@ -145,27 +107,6 @@ final class MenuBarIconCoordinator: MediaKeyIconFlashing {
             }
             Task { @MainActor [weak self] in
                 self?.apply()
-            }
-        }
-    }
-
-    private func scheduleDeviceChangeTracking() {
-        withObservationTracking {
-            _ = deviceVolumeMonitor.defaultDeviceID
-        } onChange: { [weak self] in
-            // See scheduleApplyTracking — deferred read so flashDevice sees the NEW
-            // defaultDeviceID, not the pre-change value. Otherwise the flash shows
-            // the old device's icon (e.g. AirPods while we just switched to MacBook).
-            MainActor.assumeIsolated { [weak self] in
-                self?.scheduleDeviceChangeTracking()
-            }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let newID = self.deviceVolumeMonitor.defaultDeviceID
-                if let prev = self.lastObservedDeviceID, prev != newID, newID.isValid {
-                    self.flashDevice()
-                }
-                self.lastObservedDeviceID = newID
             }
         }
     }
