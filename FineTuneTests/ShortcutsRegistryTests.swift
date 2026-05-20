@@ -91,7 +91,7 @@ struct ShortcutsRegistryTests {
         #expect(hud.failureCalls == 1)
     }
 
-    @Test("dispatch(.targetAppVolumeUp) unmutes a muted app (media-key parity)")
+    @Test("dispatch(.targetAppVolumeUp) unmutes a muted app")
     func dispatchVolumeUpUnmutesMutedApp() {
         let app = makeAudioApp(id: 1, bundleID: "com.test.app")
         let engine = RecordingAudioEngine(apps: [app], initialVolume: 0.5, initialMuted: true)

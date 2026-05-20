@@ -71,21 +71,6 @@ FineTune's input device monitoring requires separate microphone permission.
 2. Find FineTune and enable it
 3. Restart FineTune
 
-## Media keys don't control FineTune
-
-Media keys (F10 / F11 / F12) are opt-in and require the **Accessibility** permission so FineTune can observe the keystrokes.
-
-1. Open **System Settings** → **Privacy & Security** → **Accessibility**
-2. Enable FineTune in the list. If it's already on, toggle it off and back on to clear a rare permission-bootstrap race.
-3. Open FineTune Settings → **Media Keys & HUD**, turn on **Control volume with media keys**, and pick a HUD style (Tahoe or Classic) or disable the HUD
-
-If the keys still don't work right after launch, a WindowServer handoff can briefly swallow the first keypress. Try once more; subsequent presses are reliable.
-
-## Volume HUD not appearing
-
-- Check Settings → **Media Keys & HUD**. The HUD is off by default and has to be enabled separately from the media-key toggle.
-- Switch HUD styles if one isn't rendering. Tahoe uses macOS 26's system HUD look; Classic matches the older translucent rounded-rect style.
-
 ## EQ not applying / sounds the same
 
 - The EQ is enabled by default. Check that the **toggle switch** in the EQ panel header is on.

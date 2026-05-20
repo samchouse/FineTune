@@ -9,7 +9,6 @@
     "showDeviceDisconnectAlerts": true,
     "loudnessCompensationEnabled": false,
     "loudnessEqualizationEnabled": false,
-    "mediaKeyControlEnabled": true,
     "hudStyle": "tahoe"
   },
   "deviceVolumeTierOverride": {

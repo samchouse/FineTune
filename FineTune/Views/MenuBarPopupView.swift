@@ -10,25 +10,12 @@ struct MenuBarPopupView: View {
 
     let permission: AudioRecordingPermission
 
-    /// Accessibility trust state — forwarded to the Settings window for the
-    /// media-keys section. Bindable so live re-renders occur when trust flips.
-    @Bindable var accessibility: AccessibilityPermissionService
-
-    /// Transient status (offline, suppressionDegraded) for the media-keys banner.
-    @Bindable var mediaKeyStatus: MediaKeyStatus
-
-    /// Shared popup visibility flag — mirrored to this service so `MediaKeyMonitor`
-    /// can skip HUD display while the popup is the "HUD".
+    /// Shared popup visibility flag so HUD display can be suppressed while the
+    /// popup itself is acting as the volume surface.
     @Bindable var popupVisibility: PopupVisibilityService
 
     /// Preview HUD button hook in Settings.
     let hudController: HUDWindowController
-
-    /// Needed so the popup can reconcile the tap state when the user toggles
-    /// `mediaKeyControlEnabled` inside Settings. Trust-flip reconciliation is
-    /// handled globally via `AccessibilityPermissionService.onTrustChanged`
-    /// wired in `FineTuneApp.init`.
-    let mediaKeyMonitor: MediaKeyMonitor
 
     /// Memoized sorted output devices - only recomputed when device list or default changes
     @State private var sortedDevices: [AudioDevice] = []
@@ -105,10 +92,16 @@ struct MenuBarPopupView: View {
         audioEngine.settingsManager.appSettings.popupSize.dimensions
     }
 
+    private var isAppEnabled: Bool {
+        audioEngine.isFineTuneVirtualOutputDefault
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             HStack(alignment: .top) {
                 deviceTabsHeader
+                    .disabled(!isAppEnabled)
+                    .opacity(isAppEnabled ? 1.0 : 0.45)
                 Spacer()
                 if isEditingDevicePriority {
                     Text("Drag or type a number to set priority")
@@ -118,14 +111,24 @@ struct MenuBarPopupView: View {
                     defaultDevicesStatus
                 }
                 Spacer()
-                editPriorityButton
+                if isAppEnabled {
+                    editPriorityButton
+                }
                 settingsButton
+                    .disabled(!isAppEnabled)
+                    .opacity(isAppEnabled ? 1.0 : 0.45)
             }
             .padding(.bottom, DesignTokens.Spacing.xs)
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    mainContent(scrollProxy: proxy)
+                    if isAppEnabled {
+                        mainContent(scrollProxy: proxy)
+                    } else {
+                        disabledOutputPrompt
+                        Divider().padding(.vertical, DesignTokens.Spacing.xs)
+                        footerContent
+                    }
                 }
                 .scrollIndicators(.never)
                 .frame(maxHeight: popupDimensions.maxContentHeight)
@@ -239,7 +242,8 @@ struct MenuBarPopupView: View {
         // [.down, .repeat] is required so holding a key keeps moving the
         // selection or adjusting volume — `.down` alone fires once per press.
         .onKeyPress(phases: [.down, .repeat]) { keyPress in
-            handleKeyPress(keyPress)
+            guard isAppEnabled else { return .ignored }
+            return handleKeyPress(keyPress)
         }
         .environment(textEntry)
         .onChange(of: textEntry.navRestoreNonce) { _, _ in
@@ -345,42 +349,121 @@ struct MenuBarPopupView: View {
             Divider()
                 .padding(.vertical, DesignTokens.Spacing.xs)
 
-            // Footer: support link + quit
-            HStack {
-                Button {
-                    NSWorkspace.shared.open(DesignTokens.Links.support)
-                } label: {
-                    Label("Donate", systemImage: isSupportHovered ? "heart.fill" : "heart")
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(isSupportHovered ? Color(nsColor: .systemPink) : DesignTokens.Colors.textTertiary)
-                .onHover { hovering in
-                    withAnimation(DesignTokens.Animation.hover) {
-                        isSupportHovered = hovering
-                    }
-                }
-                .accessibilityLabel("Donate to FineTune")
-                .help("Donate to FineTune")
+            footerContent
+        }
+    }
 
-                Spacer()
+    private var disabledOutputPrompt: some View {
+        VStack(spacing: DesignTokens.Spacing.md) {
+            ZStack {
+                Circle()
+                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.8))
+                    .frame(width: 54, height: 54)
 
-                Button {
-                    NSApplication.shared.terminate(nil)
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Quit")
-                        Text("⌘Q")
-                            .foregroundStyle(DesignTokens.Colors.textTertiary)
-                    }
-                }
-                .buttonStyle(.plain)
-                .font(DesignTokens.Typography.caption)
-                .foregroundStyle(DesignTokens.Colors.textSecondary)
-                .glassButtonStyle()
-                .accessibilityLabel("Quit FineTune")
-                .help("Quit FineTune (⌘Q)")
+                Image(systemName: "speaker.wave.2.circle.fill")
+                    .font(.system(size: 30, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
             }
+
+            VStack(spacing: 6) {
+                Text("FineTune needs to be the selected output")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(DesignTokens.Colors.textPrimary)
+                    .multilineTextAlignment(.center)
+
+                Text("Set macOS output to FineTune to control your audio.")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Button {
+                _ = audioEngine.switchSystemOutputToFineTuneVirtualOutput()
+            } label: {
+                Label("Switch to FineTune Output", systemImage: "arrow.triangle.2.circlepath")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(!audioEngine.isFineTuneVirtualOutputAvailable)
+
+            if !audioEngine.isFineTuneVirtualOutputAvailable {
+                VStack(spacing: DesignTokens.Spacing.md) {
+                    Text("FineTune Output is not installed or Core Audio has not loaded it yet.")
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                        .multilineTextAlignment(.center)
+                    
+                    Button {
+                        Task {
+                            _ = await audioEngine.installDriver()
+                        }
+                    } label: {
+                        Label(audioEngine.needsDriverUpdate ? "Update FineTune Driver" : "Install FineTune Driver", 
+                              systemImage: audioEngine.needsDriverUpdate ? "arrow.clockwise.circle" : "tray.and.arrow.down")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            } else if audioEngine.needsDriverUpdate {
+                VStack(spacing: DesignTokens.Spacing.md) {
+                    Text("A new version of the FineTune driver is available.")
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                        .multilineTextAlignment(.center)
+                    
+                    Button {
+                        Task {
+                            _ = await audioEngine.installDriver()
+                        }
+                    } label: {
+                        Label("Update FineTune Driver", systemImage: "arrow.clockwise.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 8)
+    }
+
+    private var footerContent: some View {
+        HStack {
+            Button {
+                NSWorkspace.shared.open(DesignTokens.Links.support)
+            } label: {
+                Label("Donate", systemImage: isSupportHovered ? "heart.fill" : "heart")
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(isSupportHovered ? Color(nsColor: .systemPink) : DesignTokens.Colors.textTertiary)
+            .onHover { hovering in
+                withAnimation(DesignTokens.Animation.hover) {
+                    isSupportHovered = hovering
+                }
+            }
+            .accessibilityLabel("Donate to FineTune")
+            .help("Donate to FineTune")
+
+            Spacer()
+
+            Button {
+                NSApplication.shared.terminate(nil)
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Quit")
+                    Text("⌘Q")
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                }
+            }
+            .buttonStyle(.plain)
+            .font(DesignTokens.Typography.caption)
+            .foregroundStyle(DesignTokens.Colors.textSecondary)
+            .glassButtonStyle()
+            .accessibilityLabel("Quit FineTune")
+            .help("Quit FineTune (⌘Q)")
         }
     }
 
@@ -577,20 +660,21 @@ struct MenuBarPopupView: View {
 
                     DeviceRow(
                         device: device,
-                        isDefault: device.id == deviceVolumeMonitor.defaultDeviceID,
+                        isDefault: audioEngine.isCurrentPlaybackOutput(device),
                         volume: deviceVolumeMonitor.volumes[device.id] ?? 1.0,
                         isMuted: deviceVolumeMonitor.muteStates[device.id] ?? false,
                         volumeBackend: audioEngine.outputVolumeBackend(for: device.id),
                         onSetDefault: {
-                            audioEngine.setDefaultOutputDevice(device.id)
+                            _ = audioEngine.setPlaybackOutputDevice(device.id)
                         },
                         onVolumeChange: { volume in
-                            deviceVolumeMonitor.setVolume(for: device.id, to: volume)
+                            audioEngine.setPlaybackOutputVolume(for: device.id, to: volume)
                         },
                         onMuteToggle: {
                             let currentMute = deviceVolumeMonitor.muteStates[device.id] ?? false
-                            deviceVolumeMonitor.setMute(for: device.id, to: !currentMute)
+                            audioEngine.setPlaybackOutputMute(for: device.id, to: !currentMute)
                         },
+                        isEnabled: audioEngine.isFineTuneVirtualOutputDefault,
                         autoEQProfileName: profileName,
                         autoEQEnabled: selection?.isEnabled ?? false,
                         onAutoEQToggle: { enabled in
@@ -1132,7 +1216,7 @@ struct MenuBarPopupView: View {
     /// result — `defaultDeviceUID` can be briefly nil during device switchover
     /// and we don't want the main view to show zero rows in that window.
     private func updateSortedDevices() {
-        let all = audioEngine.prioritySortedOutputDevices
+        let all = audioEngine.outputDevices
         let defaultUID = deviceVolumeMonitor.defaultDeviceUID
         let filtered = all.filter { device in
             device.uid == defaultUID || !audioEngine.settingsManager.isOutputDeviceHidden(device.uid)
@@ -1144,7 +1228,7 @@ struct MenuBarPopupView: View {
     /// The current default input device is always kept visible even if hidden.
     /// Empty-filter fallback mirrors `updateSortedDevices`.
     private func updateSortedInputDevices() {
-        let all = audioEngine.prioritySortedInputDevices
+        let all = audioEngine.inputDevices
         let defaultUID = deviceVolumeMonitor.defaultInputDeviceUID
         let filtered = all.filter { device in
             device.uid == defaultUID || !audioEngine.settingsManager.isInputDeviceHidden(device.uid)
@@ -1337,12 +1421,15 @@ struct MenuBarPopupView: View {
                 let next = Float(max(0.0, min(1.0, current + delta)))
                 deviceVolumeMonitor.setInputVolume(for: device.id, to: next)
             } else {
+                guard audioEngine.isFineTuneVirtualOutputDefault else {
+                    return .ignored
+                }
                 guard let device = sortedDevices.first(where: { $0.uid == uid }) else {
                     return .ignored
                 }
                 let current = Double(deviceVolumeMonitor.volumes[device.id] ?? 1.0)
                 let next = Float(max(0.0, min(1.0, current + delta)))
-                deviceVolumeMonitor.setVolume(for: device.id, to: next)
+                audioEngine.setPlaybackOutputVolume(for: device.id, to: next)
             }
             return .handled
         }
@@ -1391,11 +1478,14 @@ struct MenuBarPopupView: View {
                 let current = deviceVolumeMonitor.inputMuteStates[device.id] ?? false
                 deviceVolumeMonitor.setInputMute(for: device.id, to: !current)
             } else {
+                guard audioEngine.isFineTuneVirtualOutputDefault else {
+                    return .ignored
+                }
                 guard let device = sortedDevices.first(where: { $0.uid == uid }) else {
                     return .ignored
                 }
                 let current = deviceVolumeMonitor.muteStates[device.id] ?? false
-                deviceVolumeMonitor.setMute(for: device.id, to: !current)
+                audioEngine.setPlaybackOutputMute(for: device.id, to: !current)
             }
             return .handled
         }
@@ -1411,10 +1501,13 @@ struct MenuBarPopupView: View {
                 }
                 audioEngine.setLockedInputDevice(device)
             } else {
+                guard audioEngine.isFineTuneVirtualOutputDefault else {
+                    return .ignored
+                }
                 guard let device = sortedDevices.first(where: { $0.uid == uid }) else {
                     return .ignored
                 }
-                audioEngine.setDefaultOutputDevice(device.id)
+                _ = audioEngine.setPlaybackOutputDevice(device.id)
             }
             NSApp.keyWindow?.resignKey()
             return .handled

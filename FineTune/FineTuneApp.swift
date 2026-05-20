@@ -40,11 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 struct FineTuneApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var audioEngine: AudioEngine
-    @State private var accessibility: AccessibilityPermissionService
-    @State private var mediaKeyStatus: MediaKeyStatus
     @State private var popupVisibility: PopupVisibilityService
     @State private var hudController: HUDWindowController
-    @State private var mediaKeyMonitor: MediaKeyMonitor
     @State private var iconCoordinator: MenuBarIconCoordinator
     @State private var menuBarPopupController: MenuBarPopupController
     @State private var shortcutsRegistry: ShortcutsRegistry
@@ -65,9 +62,6 @@ struct FineTuneApp: App {
                 settings: audioEngine.settingsManager,
                 audioEngine: audioEngine,
                 deviceVolumeMonitor: audioEngine.deviceVolumeMonitor as! DeviceVolumeMonitor,
-                accessibility: accessibility,
-                mediaKeyStatus: mediaKeyStatus,
-                mediaKeyMonitor: mediaKeyMonitor,
                 shortcutsRegistry: shortcutsRegistry,
                 updateManager: updateManager
             )
@@ -87,11 +81,8 @@ struct FineTuneApp: App {
             deviceVolumeMonitor: audioEngine.deviceVolumeMonitor as! DeviceVolumeMonitor,
             updateManager: updateManager,
             permission: audioEngine.permission,
-            accessibility: accessibility,
-            mediaKeyStatus: mediaKeyStatus,
             popupVisibility: popupVisibility,
-            hudController: hudController,
-            mediaKeyMonitor: mediaKeyMonitor
+            hudController: hudController
         )
         .task {
             // Idempotent: subsequent task runs (popup re-open) are no-ops inside start().
@@ -111,51 +102,35 @@ struct FineTuneApp: App {
         let engine = AudioEngine(permission: permission, settingsManager: settings, autoEQProfileManager: profileManager)
         _audioEngine = State(initialValue: engine)
 
-        // Media keys / HUD services — instantiated at app scope so the tap
-        // and HUD panel outlive popup open/close cycles.
-        let accessibilityService = AccessibilityPermissionService()
-        let statusService = MediaKeyStatus()
+        // HUD services are instantiated at app scope so the panel outlives
+        // popup open/close cycles.
         let popupService = PopupVisibilityService()
-        let hud = HUDWindowController(settingsManager: settings, mediaKeyStatus: statusService, popupVisibility: popupService)
+        let hud = HUDWindowController(settingsManager: settings, popupVisibility: popupService)
 
         // Wire the interactive Tahoe slider back to the device volume monitor.
-        // Mirrors the mute semantics applied for media-key drags (auto-unmute
-        // when ramping above 0 from muted; auto-mute when dragging down to 0)
-        // so the HUD slider and F11/F12 behave identically.
+        // Mirrors the popup mute semantics (auto-unmute when ramping above 0
+        // from muted; auto-mute when dragging down to 0).
         hud.volumeWriter = { [weak engine] sliderFraction in
             guard let engine else { return }
             let volumeMonitor = engine.deviceVolumeMonitor
             let deviceID = volumeMonitor.defaultDeviceID
             guard deviceID.isValid else { return }
-            let tier = volumeMonitor.outputVolumeBackend(for: deviceID)
+            let tier: VolumeControlTier = engine.isFineTuneVirtualOutputDefault ? .hardware : volumeMonitor.outputVolumeBackend(for: deviceID)
             let currentMute = volumeMonitor.muteStates[deviceID] ?? false
             let willBeSilent = sliderFraction <= 0.001
             if currentMute && !willBeSilent {
-                volumeMonitor.setMute(for: deviceID, to: false)
+                engine.setPlaybackOutputMute(for: deviceID, to: false)
             } else if !currentMute && willBeSilent {
-                volumeMonitor.setMute(for: deviceID, to: true)
+                engine.setPlaybackOutputMute(for: deviceID, to: true)
             }
             let gain = VolumeMapping.systemGain(forSliderFraction: sliderFraction, tier: tier)
-            volumeMonitor.setVolume(for: deviceID, to: gain)
+            engine.setPlaybackOutputVolume(for: deviceID, to: gain)
         }
 
-        let monitor = MediaKeyMonitor(
-            decoder: IOKitMediaKeyDecoder(),
-            audioEngine: engine,
-            settingsManager: settings,
-            accessibility: accessibilityService,
-            hudController: hud,
-            popupVisibility: popupService,
-            mediaKeyStatus: statusService
-        )
-        _accessibility = State(initialValue: accessibilityService)
-        _mediaKeyStatus = State(initialValue: statusService)
         _popupVisibility = State(initialValue: popupService)
         _hudController = State(initialValue: hud)
-        _mediaKeyMonitor = State(initialValue: monitor)
 
         let coordinator = MenuBarIconCoordinator(deviceVolumeMonitor: engine.deviceVolumeMonitor as! DeviceVolumeMonitor, settings: settings)
-        monitor.iconCoordinator = coordinator
         // Defer start() so NSApplication.shared is fully bootstrapped before we walk NSApp.windows.
         DispatchQueue.main.async { [coordinator] in coordinator.start() }
         _iconCoordinator = State(initialValue: coordinator)
@@ -171,17 +146,6 @@ struct FineTuneApp: App {
         )
         launchIconImage = launchState.image.nsImage()
             ?? NSImage(systemSymbolName: "speaker.wave.2", accessibilityDescription: "FineTune")!
-
-        // Start Accessibility polling immediately so `isTrustedCached` is live
-        // before the user first opens Settings. The trust-flip callback wires
-        // the monitor to reconcile its tap state whenever trust changes — this
-        // is the single source of truth for retroactive start/stop (a `.onChange`
-        // inside MenuBarPopupView would miss flips when the popup is closed).
-        accessibilityService.onTrustChanged = { [weak monitor] _ in
-            monitor?.reconcile()
-        }
-        accessibilityService.start()
-        monitor.reconcile()
 
         // Global hotkeys (KeyboardShortcuts SPM, Carbon-backed; no Accessibility
         // permission required for the hotkey itself). Registry start() is deferred
@@ -224,16 +188,14 @@ struct FineTuneApp: App {
             // If not granted, notifications will silently not appear - acceptable behavior
         }
 
-        // Flush debounced settings + tear down the CGEventTap before dealloc.
+        // Flush debounced settings and tear down app-level services before dealloc.
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main
-        ) { [settings, monitor, accessibilityService, hud, coordinator] _ in
+        ) { [settings, hud, coordinator] _ in
             MainActor.assumeIsolated {
                 coordinator.stop()
-                monitor.stop()
-                accessibilityService.stop()
                 hud.shutdown()
                 settings.flushSync()
             }

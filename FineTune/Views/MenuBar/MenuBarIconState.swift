@@ -42,14 +42,12 @@ nonisolated enum MenuBarIconState: Equatable {
     case speakerVolume(VolumeBucket)
     case speakerMuted
     case staticBaseline(MenuBarIconImage)
-    case deviceFlash(symbol: String)
 
     var image: MenuBarIconImage {
         switch self {
         case .speakerVolume(let bucket): return .systemSymbol(bucket.symbolName)
         case .speakerMuted:              return .systemSymbol("speaker.slash.fill")
         case .staticBaseline(let image): return image
-        case .deviceFlash(let symbol):   return .systemSymbol(symbol)
         }
     }
 }

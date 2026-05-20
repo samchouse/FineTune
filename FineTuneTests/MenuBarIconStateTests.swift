@@ -116,11 +116,6 @@ struct MenuBarIconStateImageTests {
         #expect(MenuBarIconState.staticBaseline(.asset("X")).image == .asset("X"))
         #expect(MenuBarIconState.staticBaseline(.systemSymbol("waveform")).image == .systemSymbol("waveform"))
     }
-
-    @Test("deviceFlash wraps an SF Symbol")
-    func deviceFlashImage() {
-        #expect(MenuBarIconState.deviceFlash(symbol: "airpodsmax").image == .systemSymbol("airpodsmax"))
-    }
 }
 
 // MARK: - Style-dependent baseline

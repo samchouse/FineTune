@@ -42,7 +42,6 @@ struct SettingsManagerAppSettingsBindingTests {
 
         var modified = managerA.appSettings
         modified.defaultNewAppVolume = 0.7
-        modified.mediaKeyControlEnabled = true
         modified.showDeviceDisconnectAlerts = false
 
         managerA.appSettings = modified

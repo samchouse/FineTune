@@ -145,9 +145,8 @@ final class MockDeviceVolumeProviding: DeviceVolumeProviding {
     var volumes: [AudioDeviceID: Float] = [:]
     var muteStates: [AudioDeviceID: Bool] = [:]
 
-    /// Records every `setVolume` call the MediaKeyMonitor makes. Tests inspect
-    /// this to assert the full write path (protocol → mock) is exercised rather
-    /// than being silently short-circuited by a forced cast.
+    /// Records every `setVolume` call so tests can assert the full write path
+    /// is exercised rather than being silently short-circuited by a forced cast.
     private(set) var setVolumeCalls: [(deviceID: AudioDeviceID, volume: Float)] = []
     private(set) var setMuteCalls: [(deviceID: AudioDeviceID, muted: Bool)] = []
 
@@ -204,27 +203,6 @@ final class MockDeviceVolumeProviding: DeviceVolumeProviding {
 
     func start() {}
     func stop() {}
-}
-
-// MARK: - Mock AccessibilityTrustProviding
-
-/// Controllable AX-trust stub used by MediaKeyMonitor tests. The real service
-/// reads `AXIsProcessTrusted()` which is always false inside the test runner,
-/// which would collapse every branch that depends on trust to a single path.
-@MainActor
-final class MockAccessibilityTrustProviding: AccessibilityTrustProviding {
-    var isTrustedValue: Bool
-    private(set) var refreshCallCount: Int = 0
-
-    init(isTrusted: Bool = true) {
-        self.isTrustedValue = isTrusted
-    }
-
-    var isTrusted: Bool { isTrustedValue }
-
-    func refresh() {
-        refreshCallCount += 1
-    }
 }
 
 @Suite("MockDeviceVolumeProviding — contract")
@@ -365,7 +343,6 @@ struct SettingsMigrationV10toV11Tests {
             "showDeviceDisconnectAlerts": true,
             "loudnessCompensationEnabled": false,
             "loudnessEqualizationEnabled": false,
-            "mediaKeyControlEnabled": true,
             "hudStyle": "tahoe"
           },
           "deviceVolumeTierOverride": {
@@ -390,7 +367,6 @@ struct SettingsMigrationV10toV11Tests {
         #expect(decoded.softwareDeviceVolumes["uid-usb-interface"] == 0.6)
         #expect(decoded.softwareDeviceMuteStates["uid-usb-interface"] == false)
         #expect(decoded.softwareDeviceSavedVolumes["uid-usb-interface"] == 0.6)
-        #expect(decoded.appSettings.mediaKeyControlEnabled == true)
     }
 }
 
@@ -461,4 +437,3 @@ struct DeviceVolumeStoredVolumeTests {
         #expect(stored > 0, "\(step) software step-up stuck at silence — issue #295 regression")
     }
 }
-

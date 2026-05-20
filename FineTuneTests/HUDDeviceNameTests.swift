@@ -36,10 +36,9 @@ struct HUDDeviceNameSmokeTests {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
         let settings = SettingsManager(directory: tempDir)
-        let status = MediaKeyStatus()
         let popup = PopupVisibilityService()
         popup.isVisible = popupVisible
-        let hud = HUDWindowController(settingsManager: settings, mediaKeyStatus: status, popupVisibility: popup)
+        let hud = HUDWindowController(settingsManager: settings, popupVisibility: popup)
         hud.frameProvider = { NSRect(x: 0, y: 23, width: 1440, height: 877) }
         return hud
     }

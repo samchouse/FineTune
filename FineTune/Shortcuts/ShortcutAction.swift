@@ -21,9 +21,8 @@ enum ShortcutAction: String, CaseIterable, Codable, Sendable {
         }
     }
 
-    /// Whether holding the chord should keep firing the action while held,
-    /// matching macOS media-key auto-repeat. Toggles must not repeat
-    /// (would flip-flop state every interval).
+    /// Whether holding the chord should keep firing the action while held.
+    /// Toggles must not repeat because they would flip-flop state every interval.
     var supportsRepeat: Bool {
         switch self {
         case .targetAppVolumeUp, .targetAppVolumeDown: true
