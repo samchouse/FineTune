@@ -25,7 +25,9 @@ struct AudioDeviceOrderingTests {
         volume.defaultDeviceUID = virtual.uid
 
         let engine = AudioEngine(
+            permission: AudioRecordingPermission(),
             settingsManager: settings,
+            autoEQProfileManager: AutoEQProfileManager(),
             deviceProvider: monitor,
             processMonitor: AudioProcessMonitor(),
             deviceVolumeMonitor: volume,

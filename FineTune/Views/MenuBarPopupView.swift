@@ -92,16 +92,10 @@ struct MenuBarPopupView: View {
         audioEngine.settingsManager.appSettings.popupSize.dimensions
     }
 
-    private var isAppEnabled: Bool {
-        audioEngine.isFineTuneVirtualOutputDefault
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             HStack(alignment: .top) {
                 deviceTabsHeader
-                    .disabled(!isAppEnabled)
-                    .opacity(isAppEnabled ? 1.0 : 0.45)
                 Spacer()
                 if isEditingDevicePriority {
                     Text("Drag or type a number to set priority")
@@ -111,24 +105,14 @@ struct MenuBarPopupView: View {
                     defaultDevicesStatus
                 }
                 Spacer()
-                if isAppEnabled {
-                    editPriorityButton
-                }
+                editPriorityButton
                 settingsButton
-                    .disabled(!isAppEnabled)
-                    .opacity(isAppEnabled ? 1.0 : 0.45)
             }
             .padding(.bottom, DesignTokens.Spacing.xs)
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    if isAppEnabled {
-                        mainContent(scrollProxy: proxy)
-                    } else {
-                        disabledOutputPrompt
-                        Divider().padding(.vertical, DesignTokens.Spacing.xs)
-                        footerContent
-                    }
+                    mainContent(scrollProxy: proxy)
                 }
                 .scrollIndicators(.never)
                 .frame(maxHeight: popupDimensions.maxContentHeight)
@@ -242,7 +226,6 @@ struct MenuBarPopupView: View {
         // [.down, .repeat] is required so holding a key keeps moving the
         // selection or adjusting volume — `.down` alone fires once per press.
         .onKeyPress(phases: [.down, .repeat]) { keyPress in
-            guard isAppEnabled else { return .ignored }
             return handleKeyPress(keyPress)
         }
         .environment(textEntry)
@@ -337,6 +320,8 @@ struct MenuBarPopupView: View {
     @ViewBuilder
     private func mainContent(scrollProxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            driverMaintenanceBanner
+
             // Devices section (tabbed: Output / Input)
             devicesSection
 
@@ -353,80 +338,49 @@ struct MenuBarPopupView: View {
         }
     }
 
-    private var disabledOutputPrompt: some View {
-        VStack(spacing: DesignTokens.Spacing.md) {
-            ZStack {
-                Circle()
-                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.8))
-                    .frame(width: 54, height: 54)
+    @ViewBuilder
+    private var driverMaintenanceBanner: some View {
+        if !audioEngine.isFineTuneVirtualOutputAvailable || audioEngine.needsDriverUpdate {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+                    Image(systemName: audioEngine.needsDriverUpdate ? "arrow.clockwise.circle" : "tray.and.arrow.down")
+                        .font(.system(size: 16, weight: .medium))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(DesignTokens.Colors.interactiveDefault)
 
-                Image(systemName: "speaker.wave.2.circle.fill")
-                    .font(.system(size: 30, weight: .semibold))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(DesignTokens.Colors.textSecondary)
-            }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(audioEngine.needsDriverUpdate ? "Driver update available" : "FineTune driver not installed")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(DesignTokens.Colors.textPrimary)
+                        Text(audioEngine.needsDriverUpdate ? "Install the bundled driver to use the latest audio routing behavior." : "Install the driver to make FineTune Output available.")
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(DesignTokens.Colors.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
-            VStack(spacing: 6) {
-                Text("FineTune needs to be the selected output")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(DesignTokens.Colors.textPrimary)
-                    .multilineTextAlignment(.center)
+                    Spacer(minLength: DesignTokens.Spacing.sm)
 
-                Text("Set macOS output to FineTune to control your audio.")
-                    .font(DesignTokens.Typography.caption)
-                    .foregroundStyle(DesignTokens.Colors.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Button {
-                _ = audioEngine.switchSystemOutputToFineTuneVirtualOutput()
-            } label: {
-                Label("Switch to FineTune Output", systemImage: "arrow.triangle.2.circlepath")
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(!audioEngine.isFineTuneVirtualOutputAvailable)
-
-            if !audioEngine.isFineTuneVirtualOutputAvailable {
-                VStack(spacing: DesignTokens.Spacing.md) {
-                    Text("FineTune Output is not installed or Core Audio has not loaded it yet.")
-                        .font(DesignTokens.Typography.caption)
-                        .foregroundStyle(DesignTokens.Colors.textTertiary)
-                        .multilineTextAlignment(.center)
-                    
                     Button {
                         Task {
                             _ = await audioEngine.installDriver()
                         }
                     } label: {
-                        Label(audioEngine.needsDriverUpdate ? "Update FineTune Driver" : "Install FineTune Driver", 
-                              systemImage: audioEngine.needsDriverUpdate ? "arrow.clockwise.circle" : "tray.and.arrow.down")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-            } else if audioEngine.needsDriverUpdate {
-                VStack(spacing: DesignTokens.Spacing.md) {
-                    Text("A new version of the FineTune driver is available.")
-                        .font(DesignTokens.Typography.caption)
-                        .foregroundStyle(DesignTokens.Colors.textTertiary)
-                        .multilineTextAlignment(.center)
-                    
-                    Button {
-                        Task {
-                            _ = await audioEngine.installDriver()
-                        }
-                    } label: {
-                        Label("Update FineTune Driver", systemImage: "arrow.clockwise.circle")
+                        Text(audioEngine.needsDriverUpdate ? "Update" : "Install")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
             }
+            .padding(DesignTokens.Spacing.sm)
+            .background(
+                RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
+                    .fill(DesignTokens.Colors.glassFill)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
+                            .strokeBorder(DesignTokens.Colors.glassRowBorder, lineWidth: 0.5)
+                    )
+            )
         }
-        .frame(maxWidth: .infinity)
-        .padding(.bottom, 8)
     }
 
     private var footerContent: some View {
@@ -469,9 +423,9 @@ struct MenuBarPopupView: View {
 
     // MARK: - Default Devices Status
 
-    /// Name of the current default output device
+    /// Name of FineTune's current physical playback output.
     private var defaultOutputDeviceName: String {
-        guard let uid = deviceVolumeMonitor.defaultDeviceUID,
+        guard let uid = audioEngine.currentPlaybackOutputUID,
               let device = sortedDevices.first(where: { $0.uid == uid }) else {
             return "No Output"
         }
@@ -947,7 +901,7 @@ struct MenuBarPopupView: View {
                 selectedDeviceUID: deviceUID,
                 selectedDeviceUIDs: audioEngine.getSelectedDeviceUIDs(for: app),
                 isFollowingDefault: audioEngine.isFollowingDefault(for: app),
-                defaultDeviceUID: deviceVolumeMonitor.defaultDeviceUID,
+                defaultDeviceUID: audioEngine.currentPlaybackOutputUID,
                 deviceSelectionMode: audioEngine.getDeviceSelectionMode(for: app),
                 boost: audioEngine.getBoost(for: app),
                 onBoostChange: { boost in
@@ -1018,7 +972,7 @@ struct MenuBarPopupView: View {
             selectedDeviceUID: audioEngine.getDeviceRoutingForInactive(identifier: identifier),
             selectedDeviceUIDs: audioEngine.getSelectedDeviceUIDsForInactive(identifier: identifier),
             isFollowingDefault: audioEngine.isFollowingDefaultForInactive(identifier: identifier),
-            defaultDeviceUID: deviceVolumeMonitor.defaultDeviceUID,
+            defaultDeviceUID: audioEngine.currentPlaybackOutputUID,
             deviceSelectionMode: audioEngine.getDeviceSelectionModeForInactive(identifier: identifier),
             isMuted: audioEngine.getMuteForInactive(identifier: identifier),
             boost: audioEngine.getBoostForInactive(identifier: identifier),
@@ -1211,13 +1165,13 @@ struct MenuBarPopupView: View {
     // MARK: - Helpers
 
     /// Recomputes sorted output devices, filtering hidden ones.
-    /// The current default output device is always kept visible even if hidden.
+    /// The selected playback output is always kept visible even if hidden.
     /// Falls back to the unfiltered list if the filter produces an empty
     /// result — `defaultDeviceUID` can be briefly nil during device switchover
     /// and we don't want the main view to show zero rows in that window.
     private func updateSortedDevices() {
         let all = audioEngine.outputDevices
-        let defaultUID = deviceVolumeMonitor.defaultDeviceUID
+        let defaultUID = audioEngine.currentPlaybackOutputUID
         let filtered = all.filter { device in
             device.uid == defaultUID || !audioEngine.settingsManager.isOutputDeviceHidden(device.uid)
         }
@@ -1280,7 +1234,7 @@ struct MenuBarPopupView: View {
     private func currentDefaultDeviceUID() -> String? {
         showingInputDevices
             ? deviceVolumeMonitor.defaultInputDeviceUID
-            : deviceVolumeMonitor.defaultDeviceUID
+            : audioEngine.currentPlaybackOutputUID
     }
 
     private func handleKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {
