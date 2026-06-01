@@ -193,8 +193,9 @@ struct FineTuneApp: App {
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main
-        ) { [settings, hud, coordinator] _ in
+        ) { [settings, hud, coordinator, engine] _ in
             MainActor.assumeIsolated {
+                engine.restoreSelectedPlaybackOutputForTermination()
                 coordinator.stop()
                 hud.shutdown()
                 settings.flushSync()

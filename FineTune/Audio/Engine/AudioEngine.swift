@@ -1,5 +1,6 @@
 // FineTune/Audio/Engine/AudioEngine.swift
 import AudioToolbox
+import AppKit
 import Foundation
 import os
 import UserNotifications
@@ -50,6 +51,10 @@ final class AudioEngine {
     private var staleCleanupTask: Task<Void, Never>?  // Debounced cleanup scheduling
     private var healthMonitorTask: Task<Void, Never>?  // Periodic tap health monitor
     private var tapRecoveryCooldownUntil: [pid_t: Date] = [:]  // Prevents tap recreation thrashing
+    private var sleepObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
+    private var defaultOutputEnforcementTask: Task<Void, Never>?
+    private var isRestoringOutputForTermination = false
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioEngine")
     private static let fineTuneVirtualOutputUID = "FineTune.VirtualOutput"
     private var virtualOutputMasterVolume: Float = 1.0
@@ -250,7 +255,7 @@ final class AudioEngine {
         }
 
         outputEchoTracker.onTimeout = { [weak self] _ in
-            self?.restoreConfirmedDefault()
+            self?.enforceFineTuneDefaultOutput(reason: "output echo timeout")
         }
         inputEchoTracker.onTimeout = { [weak self] _ in
             guard let self, self.settingsManager.appSettings.lockInputDevice else { return }
@@ -284,6 +289,8 @@ final class AudioEngine {
                 self.registerNewDevicesInPriority()
                 // Seed the confirmed default from whatever macOS has at startup
                 self.lastConfirmedDefaultUID = self.deviceVolumeMonitor.defaultDeviceUID
+                self.installSystemPowerObservers()
+                self.startFineTuneDefaultOutputEnforcement()
                 if manager.appSettings.lockInputDevice {
                     self.restoreLockedInputDevice()
                 }
@@ -367,7 +374,7 @@ final class AudioEngine {
         processMonitor.onAppsChanged = { [weak self] _ in
             guard let self else { return }
             guard self.isFineTuneVirtualOutputDefault else {
-                self.suspendProcessingForNonFineTuneOutput()
+                self.enforceFineTuneDefaultOutput(reason: "apps changed")
                 self.scheduleStaleCleanup()
                 return
             }
@@ -399,6 +406,7 @@ final class AudioEngine {
             if Self.isFineTuneVirtualOutput(deviceUID) {
                 self?.syncVirtualOutputMasterState()
                 self?.refreshAllTapOutputStates()
+                self?.enforceFineTuneDefaultOutput(reason: "FineTune Output connected")
             }
             self?.handleDeviceConnected(deviceUID, name: deviceName)
             self?.bluetoothDeviceMonitor.notifyDeviceAppearedInCoreAudio()
@@ -719,7 +727,7 @@ final class AudioEngine {
 
     private func applyTapOutputState(to tap: any ProcessTapControlling, for pid: pid_t, deviceUIDs: [String]? = nil) {
         guard isFineTuneVirtualOutputDefault else {
-            bypassTapProcessing(tap)
+            enforceFineTuneDefaultOutput(reason: "tap output state update")
             return
         }
 
@@ -820,11 +828,109 @@ final class AudioEngine {
         return didSwitch
     }
 
-    func isCurrentPlaybackOutput(_ device: AudioDevice) -> Bool {
-        if isFineTuneVirtualOutputDefault {
-            return device.uid == preferredPhysicalOutputUIDForVirtualDefault()
+    private func installSystemPowerObservers() {
+        guard sleepObserver == nil, wakeObserver == nil else { return }
+
+        let center = NSWorkspace.shared.notificationCenter
+        sleepObserver = center.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleSystemWillSleep()
+            }
         }
-        return device.id == deviceVolumeMonitor.defaultDeviceID
+
+        wakeObserver = center.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleSystemDidWake()
+            }
+        }
+    }
+
+    private func currentSystemDefaultOutputUID() -> String? {
+        guard let deviceID = try? AudioDeviceID.readDefaultOutputDevice(),
+              deviceID.isValid else { return nil }
+        return try? deviceID.readDeviceUID()
+    }
+
+    private func handleSystemWillSleep() {
+        settingsManager.flushSync()
+    }
+
+    private func handleSystemDidWake() {
+        startFineTuneDefaultOutputEnforcement()
+    }
+
+    private func startFineTuneDefaultOutputEnforcement() {
+        defaultOutputEnforcementTask?.cancel()
+        defaultOutputEnforcementTask = Task { @MainActor [weak self] in
+            for delay in [0, 500, 1_500, 3_000, 5_000, 10_000, 20_000, 30_000, 60_000] {
+                try? await Task.sleep(for: .milliseconds(delay))
+                guard let self, !Task.isCancelled else { return }
+                self.enforceFineTuneDefaultOutput(reason: "scheduled enforcement")
+            }
+        }
+    }
+
+    /// Keeps the macOS default output on FineTune while the app is running.
+    @discardableResult
+    private func enforceFineTuneDefaultOutput(reason: String) -> Bool {
+        guard !isRestoringOutputForTermination else { return false }
+        guard let virtualDevice = fineTuneVirtualOutputDevice() else {
+            logger.debug("FineTune Output unavailable during default enforcement")
+            return false
+        }
+
+        let actualUID = currentSystemDefaultOutputUID() ?? deviceVolumeMonitor.defaultDeviceUID
+
+        if actualUID != virtualDevice.uid {
+            guard deviceVolumeMonitor.setDefaultDevice(virtualDevice.id) else {
+                logger.warning("Failed to set FineTune Output as macOS default")
+                return false
+            }
+            outputEchoTracker.increment(virtualDevice.uid)
+            logger.info("Set FineTune Output as macOS default (\(reason))")
+        }
+
+        lastConfirmedDefaultUID = virtualDevice.uid
+        resumeProcessingForFineTuneOutput()
+        if let physicalUID = preferredPhysicalOutputUIDForVirtualDefault() {
+            routeFollowsDefaultApps(to: physicalUID)
+        }
+        return true
+    }
+
+    func restoreSelectedPlaybackOutputForTermination() {
+        isRestoringOutputForTermination = true
+        defaultOutputEnforcementTask?.cancel()
+        defaultOutputEnforcementTask = nil
+
+        guard let playbackDevice = playbackOutputDeviceForVirtualDefault() else {
+            logger.warning("No selected playback output available to restore on termination")
+            return
+        }
+
+        guard deviceVolumeMonitor.setDefaultDevice(playbackDevice.id) else {
+            logger.warning("Failed to restore selected playback output on termination")
+            return
+        }
+
+        lastConfirmedDefaultUID = playbackDevice.uid
+        logger.info("Restored selected playback output on termination: \(playbackDevice.name)")
+    }
+
+    func isCurrentPlaybackOutput(_ device: AudioDevice) -> Bool {
+        device.uid == currentPlaybackOutputUID
+    }
+
+    var currentPlaybackOutputUID: String? {
+        preferredPhysicalOutputUIDForVirtualDefault()
     }
 
     func setPlaybackOutputDevice(_ deviceID: AudioDeviceID) -> Bool {
@@ -840,6 +946,8 @@ final class AudioEngine {
         routeFollowsDefaultApps(to: device.uid)
         if isFineTuneVirtualOutputDefault {
             restorePlaybackState(for: device)
+        } else {
+            enforceFineTuneDefaultOutput(reason: "playback output changed")
         }
         return true
     }
@@ -1289,7 +1397,7 @@ final class AudioEngine {
     /// Updates tap configuration based on current mode and selected devices
     private func updateTapForCurrentMode(for app: AudioApp) async {
         guard isFineTuneVirtualOutputDefault else {
-            suspendProcessingForNonFineTuneOutput()
+            enforceFineTuneDefaultOutput(reason: "tap mode update")
             return
         }
 
@@ -1370,7 +1478,7 @@ final class AudioEngine {
     func applyPersistedSettings() {
         guard permission.status == .authorized else { return }
         guard isFineTuneVirtualOutputDefault else {
-            suspendProcessingForNonFineTuneOutput()
+            enforceFineTuneDefaultOutput(reason: "apply persisted settings")
             return
         }
 
@@ -1533,29 +1641,11 @@ final class AudioEngine {
         }
     }
 
-    /// Restores the default to `lastConfirmedDefaultUID` (what the user/FineTune intended).
-    /// Falls back to highest-priority device if the confirmed device is gone.
-    private func restoreConfirmedDefault() {
-        if let restoreUID = lastConfirmedDefaultUID,
-           let device = deviceMonitor.device(for: restoreUID),
-           isAliveCheck(device.id) {
-            if deviceVolumeMonitor.defaultDeviceUID != restoreUID {
-                if deviceVolumeMonitor.setDefaultDevice(device.id) {
-                    outputEchoTracker.increment(restoreUID)
-                    logger.info("Restored default → \(device.name)")
-                }
-            }
-            routeFollowsDefaultApps(to: restoreUID)
-        } else {
-            reEvaluateOutputDefault()
-        }
-    }
-
-    /// Ensures system default matches highest-priority alive connected device.
-    /// Routes followsDefault apps and switches their taps if default changes.
+    /// Ensures FineTune's internal playback target matches the highest-priority
+    /// alive connected physical device, while macOS remains on FineTune Output.
     /// Returns the resolved target UID.
     @discardableResult
-    private func reEvaluateOutputDefault(excluding: String? = nil) -> String? {
+    private func reEvaluatePlaybackOutput(excluding: String? = nil) -> String? {
         guard let target = Self.resolveHighestPriority(
             priorityOrder: settingsManager.devicePriorityOrder,
             connectedDevices: outputDevices,
@@ -1563,16 +1653,10 @@ final class AudioEngine {
             isAlive: isAliveCheck
         ) else { return nil }
 
-        let currentDefault = deviceVolumeMonitor.defaultDeviceUID
-        if target.uid != currentDefault {
-            if deviceVolumeMonitor.setDefaultDevice(target.id) {
-                outputEchoTracker.increment(target.uid)
-                logger.info("System default → \(target.name)")
-            }
-        }
-
-        lastConfirmedDefaultUID = target.uid
+        settingsManager.setLastPlaybackOutputDeviceUID(target.uid)
         routeFollowsDefaultApps(to: target.uid)
+        enforceFineTuneDefaultOutput(reason: "playback output re-evaluated")
+        logger.info("FineTune playback output → \(target.name)")
         return target.uid
     }
 
@@ -1638,8 +1722,7 @@ final class AudioEngine {
             outputPriorityState = .stable
         }
 
-        // Snapshot before async callbacks can update it
-        let wasDefaultOutput = deviceUID == deviceVolumeMonitor.defaultDeviceUID
+        let wasSelectedPlaybackOutput = deviceUID == settingsManager.lastPlaybackOutputDeviceUID
 
         // Use priority-based fallback (resolve checks isDeviceAlive internally)
         let fallbackDevice = Self.resolveHighestPriority(
@@ -1728,9 +1811,10 @@ final class AudioEngine {
             }
         }
 
-        // If the disconnected device was the system default, override to priority fallback
-        if wasDefaultOutput {
-            reEvaluateOutputDefault(excluding: deviceUID)
+        // If the disconnected device was the current playback target, pick a fallback
+        // inside FineTune while leaving macOS default on FineTune Output.
+        if wasSelectedPlaybackOutput {
+            reEvaluatePlaybackOutput(excluding: deviceUID)
         }
     }
 
@@ -1812,12 +1896,6 @@ final class AudioEngine {
             }
         }
 
-        // Only override the default if the newly connected device IS the highest-priority
-        // device (i.e., a higher-priority device just came back). If a lower-priority device
-        // connects while the user is on a higher-priority device, respect the current default —
-        // the user chose it. We still enter PENDING_AUTOSWITCH to guard against macOS
-        // auto-switching to the new device.
-        let currentDefault = deviceVolumeMonitor.defaultDeviceUID
         let isNewDeviceHigherPriority = (deviceUID == Self.resolveHighestPriority(
             priorityOrder: settingsManager.devicePriorityOrder,
             connectedDevices: outputDevices,
@@ -1830,42 +1908,18 @@ final class AudioEngine {
             installAliveWatcher(deviceID: device.id, uid: deviceUID, name: deviceName)
         }
 
-        if isNewDeviceHigherPriority, deviceUID != currentDefault {
-            // A higher-priority device reconnected — switch to it
-            reEvaluateOutputDefault()
-        } else if !isNewDeviceHigherPriority, currentDefault == deviceUID {
-            // macOS already auto-switched to the lower-priority device — restore
-            // what the user was on (not highest priority — they may have chosen a mid-priority device)
-            restoreConfirmedDefault()
+        if isNewDeviceHigherPriority,
+           deviceUID != settingsManager.lastPlaybackOutputDeviceUID {
+            reEvaluatePlaybackOutput()
+        } else {
+            enforceFineTuneDefaultOutput(reason: "output device connected")
         }
 
-        // Cancel any existing PENDING_AUTOSWITCH before entering a new one.
         if case .pendingAutoSwitch(_, let oldTask) = outputPriorityState {
             oldTask.cancel()
             outputPriorityState = .stable
         }
-
-        // Always enter PENDING_AUTOSWITCH for the newly connected device.
-        // macOS may auto-switch to it multiple times during BT firmware handshake.
-        // Without this grace period, auto-switches would be treated as "genuine user change".
-        let transport = deviceMonitor.device(for: deviceUID)?.id.readTransportType()
-        let timeout = (transport == .bluetooth || transport == .bluetoothLE)
-            ? btAutoSwitchGracePeriod
-            : autoSwitchGracePeriod
-
-        let timeoutTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(timeout))
-            guard let self, !Task.isCancelled else { return }
-            self.outputPriorityState = .stable
-            self.logger.debug("Auto-switch grace period expired, no macOS switch detected")
-        }
-
         lastAutoSwitchOverrideTime = nil
-        outputPriorityState = .pendingAutoSwitch(
-            connectedDeviceUID: deviceUID,
-            timeoutTask: timeoutTask
-        )
-        logger.debug("Entered PENDING_AUTOSWITCH for \(deviceName) (\(timeout)s grace)")
     }
 
     // MARK: - Alive Watchers
@@ -1969,83 +2023,26 @@ final class AudioEngine {
         }
     }
 
-    /// Called when system default output device changes - switches apps that follow default
+    /// Called when system default output device changes.
+    /// FineTune owns the macOS default output while running; physical playback
+    /// selection is tracked internally and restored to macOS on app exit.
     private func handleDefaultDeviceChanged(_ newDefaultUID: String) {
-        // State machine: if we're waiting for macOS to auto-switch after a device connect,
-        // check whether this change is the expected auto-switch or user intent.
-        if case .pendingAutoSwitch(let pendingUID, let timeoutTask) = outputPriorityState {
-            // Check echoes FIRST — FineTune's own changes (UI, restoreConfirmedDefault)
-            // create echoes. Consuming before Case 1 ensures FineTune UI changes aren't
-            // mistaken for macOS auto-switches.
-            if outputEchoTracker.consume(newDefaultUID) {
-                if Self.isFineTuneVirtualOutput(newDefaultUID) {
-                    resumeProcessingForFineTuneOutput()
-                } else {
-                    suspendProcessingForNonFineTuneOutput()
-                }
-                return
-            }
-
-            if newDefaultUID == pendingUID {
-                // Settling heuristic: if >1s since last override, BT auto-switches have
-                // settled. This is likely the user changing via System Settings — accept it.
-                // BT auto-switches happen within ms; user actions take >1s.
-                if let lastOverride = lastAutoSwitchOverrideTime,
-                   Date().timeIntervalSince(lastOverride) > 1.0 {
-                    timeoutTask.cancel()
-                    outputPriorityState = .stable
-                    lastConfirmedDefaultUID = newDefaultUID
-                    lastAutoSwitchOverrideTime = nil
-                    if Self.isFineTuneVirtualOutput(newDefaultUID) {
-                        resumeProcessingForFineTuneOutput()
-                    } else {
-                        suspendProcessingForNonFineTuneOutput()
-                    }
-                    let deviceName = deviceMonitor.device(for: newDefaultUID)?.name ?? newDefaultUID
-                    logger.info("Accepted user change to \(deviceName) (settled >1s)")
-                    return
-                }
-
-                // Case 1: macOS auto-switched to the newly connected device — restore what
-                // the user was on. Re-enter PENDING_AUTOSWITCH for further auto-switches.
-                timeoutTask.cancel()
-                restoreConfirmedDefault()
-                lastAutoSwitchOverrideTime = Date()
-                let transport = deviceMonitor.device(for: pendingUID)?.id.readTransportType()
-                let timeout = (transport == .bluetooth || transport == .bluetoothLE)
-                    ? btAutoSwitchGracePeriod
-                    : autoSwitchGracePeriod
-                let newTimeoutTask = Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .seconds(timeout))
-                    guard let self, !Task.isCancelled else { return }
-                    self.outputPriorityState = .stable
-                    self.lastAutoSwitchOverrideTime = nil
-                    self.logger.debug("Auto-switch grace period expired after override")
-                }
-                outputPriorityState = .pendingAutoSwitch(
-                    connectedDeviceUID: pendingUID,
-                    timeoutTask: newTimeoutTask
-                )
-                return
-            }
-
-            // Case 3: Genuine user intent (different device, not our echo) — respect it.
+        if case .pendingAutoSwitch(_, let timeoutTask) = outputPriorityState {
             timeoutTask.cancel()
             outputPriorityState = .stable
             lastAutoSwitchOverrideTime = nil
         }
 
-        // Suppress echo from our own priority-based override (when not in pendingAutoSwitch)
         if outputEchoTracker.consume(newDefaultUID) {
             if Self.isFineTuneVirtualOutput(newDefaultUID) {
                 resumeProcessingForFineTuneOutput()
-            } else {
-                suspendProcessingForNonFineTuneOutput()
+                lastConfirmedDefaultUID = newDefaultUID
+            } else if !isRestoringOutputForTermination {
+                enforceFineTuneDefaultOutput(reason: "echoed non-FineTune default")
             }
             return
         }
 
-        // If any echo counter is pending, another override is in flight — skip interim routing
         if outputEchoTracker.hasPending {
             logger.debug("Skipping followsDefault routing — echo pending")
             return
@@ -2065,9 +2062,13 @@ final class AudioEngine {
             return
         }
 
-        suspendProcessingForNonFineTuneOutput()
-        lastConfirmedDefaultUID = newDefaultUID
-        logger.info("Default changed away from FineTune Output; app controls and audio processing are disabled")
+        guard !isRestoringOutputForTermination else {
+            lastConfirmedDefaultUID = newDefaultUID
+            return
+        }
+
+        logger.info("Default changed away from FineTune Output; restoring FineTune as macOS default")
+        enforceFineTuneDefaultOutput(reason: "external default change")
         return
     }
 

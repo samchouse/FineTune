@@ -94,7 +94,9 @@ struct VirtualOutputPlaybackSyncTests {
         volume.defaultDeviceUID = virtual.uid
 
         let engine = AudioEngine(
+            permission: AudioRecordingPermission(),
             settingsManager: settings,
+            autoEQProfileManager: AutoEQProfileManager(),
             deviceProvider: deviceMonitor,
             processMonitor: AudioProcessMonitor(),
             deviceVolumeMonitor: volume,
@@ -134,7 +136,9 @@ struct VirtualOutputPlaybackSyncTests {
         settings.setDevicePriorityOrder([physical.uid])
 
         let engine = AudioEngine(
+            permission: AudioRecordingPermission(),
             settingsManager: settings,
+            autoEQProfileManager: AutoEQProfileManager(),
             deviceProvider: deviceMonitor,
             processMonitor: AudioProcessMonitor(),
             deviceVolumeMonitor: volume,
