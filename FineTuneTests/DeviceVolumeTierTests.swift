@@ -149,6 +149,7 @@ final class MockDeviceVolumeProviding: DeviceVolumeProviding {
     /// is exercised rather than being silently short-circuited by a forced cast.
     private(set) var setVolumeCalls: [(deviceID: AudioDeviceID, volume: Float)] = []
     private(set) var setMuteCalls: [(deviceID: AudioDeviceID, muted: Bool)] = []
+    private(set) var setDefaultDeviceCalls: [AudioDeviceID] = []
 
     func setVolume(for deviceID: AudioDeviceID, to volume: Float) {
         setVolumeCalls.append((deviceID, volume))
@@ -183,7 +184,12 @@ final class MockDeviceVolumeProviding: DeviceVolumeProviding {
     }
 
     @discardableResult
-    func setDefaultDevice(_ deviceID: AudioDeviceID) -> Bool { true }
+    func setDefaultDevice(_ deviceID: AudioDeviceID) -> Bool {
+        setDefaultDeviceCalls.append(deviceID)
+        defaultDeviceID = deviceID
+        defaultDeviceUID = deviceMonitor.device(for: deviceID)?.uid
+        return true
+    }
 
     @discardableResult
     func setDefaultInputDevice(_ deviceID: AudioDeviceID) -> Bool { true }

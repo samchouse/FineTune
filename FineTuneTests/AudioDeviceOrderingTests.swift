@@ -42,4 +42,36 @@ struct AudioDeviceOrderingTests {
 
         #expect(engine.outputDevices.map(\.uid) == ["speakers", "display"])
     }
+
+    @Test("Special macOS outputs are not exposed in FineTune device lists")
+    func specialOutputsAreHiddenFromFineTuneDeviceLists() {
+        let monitor = MockAudioDeviceMonitor()
+        let speakers = AudioDevice(id: 101, uid: "speakers", name: "MacBook Pro Speakers", icon: nil, supportsAutoEQ: false)
+        let airPods = AudioDevice(id: 102, uid: "airpods", name: "Sam's AirPods Pro", icon: nil, supportsAutoEQ: true)
+        let virtual = AudioDevice(id: 103, uid: "FineTune.VirtualOutput", name: "FineTune Output", icon: nil, supportsAutoEQ: false)
+        monitor.addOutputDevice(speakers)
+        monitor.addOutputDevice(airPods)
+        monitor.addOutputDevice(virtual)
+
+        let settings = SettingsManager(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        settings.setDevicePriorityOrder([airPods.uid, speakers.uid])
+
+        let volume = MockDeviceVolumeProviding(deviceMonitor: monitor)
+        volume.defaultDeviceID = virtual.id
+        volume.defaultDeviceUID = virtual.uid
+
+        let engine = AudioEngine(
+            permission: AudioRecordingPermission(),
+            settingsManager: settings,
+            autoEQProfileManager: AutoEQProfileManager(),
+            deviceProvider: monitor,
+            processMonitor: AudioProcessMonitor(),
+            deviceVolumeMonitor: volume,
+            isAlive: { _ in true },
+            startMonitorsAutomatically: false
+        )
+
+        #expect(engine.outputDevices.map(\.uid) == ["speakers"])
+        #expect(engine.prioritySortedOutputDevices.map(\.uid) == ["speakers"])
+    }
 }

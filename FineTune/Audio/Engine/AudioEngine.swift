@@ -83,7 +83,9 @@ final class AudioEngine {
     private let inputEchoTracker = EchoTracker(label: "Input")
 
     var outputDevices: [AudioDevice] {
-        deviceMonitor.outputDevices.filter { !Self.isFineTuneVirtualOutput($0.uid) }
+        deviceMonitor.outputDevices.filter {
+            !Self.isFineTuneVirtualOutput($0.uid) && !isMacOSSpecialOutputDevice($0)
+        }
     }
 
     func outputVolumeBackend(for deviceID: AudioDeviceID) -> VolumeControlTier {
@@ -795,6 +797,17 @@ final class AudioEngine {
         uid == fineTuneVirtualOutputUID
     }
 
+    static func isMacOSSpecialOutputDevice(name: String, transport: TransportType) -> Bool {
+        if transport == .airPlay { return true }
+
+        let isAirPods = name.localizedCaseInsensitiveContains("AirPods")
+        let isBluetooth = transport == .bluetooth || transport == .bluetoothLE
+
+        // Test doubles and early HAL snapshots can report `.unknown`; an AirPods
+        // name is still specific enough to preserve the macOS special route.
+        return isAirPods && (isBluetooth || transport == .unknown)
+    }
+
     var isFineTuneVirtualOutputDefault: Bool {
         guard let uid = deviceVolumeMonitor.defaultDeviceUID else { return false }
         return Self.isFineTuneVirtualOutput(uid)
@@ -853,10 +866,15 @@ final class AudioEngine {
         }
     }
 
-    private func currentSystemDefaultOutputUID() -> String? {
+    private func currentSystemDefaultOutput() -> (id: AudioDeviceID, uid: String)? {
         guard let deviceID = try? AudioDeviceID.readDefaultOutputDevice(),
               deviceID.isValid else { return nil }
-        return try? deviceID.readDeviceUID()
+        guard let uid = try? deviceID.readDeviceUID() else { return nil }
+        return (deviceID, uid)
+    }
+
+    private func currentSystemDefaultOutputUID() -> String? {
+        currentSystemDefaultOutput()?.uid
     }
 
     private func handleSystemWillSleep() {
@@ -887,7 +905,16 @@ final class AudioEngine {
             return false
         }
 
-        let actualUID = currentSystemDefaultOutputUID() ?? deviceVolumeMonitor.defaultDeviceUID
+        let actualDefault = currentSystemDefaultOutput()
+        let actualUID = actualDefault?.uid ?? deviceVolumeMonitor.defaultDeviceUID
+
+        if let actualUID,
+           isMacOSSpecialOutputDevice(uid: actualUID, deviceID: actualDefault?.id) {
+            lastConfirmedDefaultUID = actualUID
+            suspendProcessingForNonFineTuneOutput()
+            logger.info("Leaving macOS special output as default: \(actualUID) (\(reason))")
+            return false
+        }
 
         if actualUID != virtualDevice.uid {
             guard deviceVolumeMonitor.setDefaultDevice(virtualDevice.id) else {
@@ -1030,6 +1057,23 @@ final class AudioEngine {
 
     private func fineTuneVirtualOutputDevice() -> AudioDevice? {
         deviceMonitor.outputDevices.first { Self.isFineTuneVirtualOutput($0.uid) }
+    }
+
+    private func isMacOSSpecialOutputDevice(uid: String, deviceID: AudioDeviceID? = nil) -> Bool {
+        guard !Self.isFineTuneVirtualOutput(uid) else { return false }
+
+        let device = deviceMonitor.device(for: uid)
+            ?? outputDevices.first(where: { $0.uid == uid })
+            ?? deviceMonitor.outputDevices.first(where: { $0.uid == uid })
+        let resolvedID = deviceID ?? device?.id
+        let transport = resolvedID?.readTransportType()
+
+        let name = device?.name ?? ((try? resolvedID?.readDeviceName()) ?? "")
+        return Self.isMacOSSpecialOutputDevice(name: name, transport: transport ?? .unknown)
+    }
+
+    private func isMacOSSpecialOutputDevice(_ device: AudioDevice) -> Bool {
+        Self.isMacOSSpecialOutputDevice(name: device.name, transport: device.id.readTransportType())
     }
 
     private func mirrorVirtualOutputVolumeToPlaybackDevice(_ volume: Float) {
@@ -2064,6 +2108,14 @@ final class AudioEngine {
 
         guard !isRestoringOutputForTermination else {
             lastConfirmedDefaultUID = newDefaultUID
+            return
+        }
+
+        if isMacOSSpecialOutputDevice(uid: newDefaultUID) {
+            lastConfirmedDefaultUID = newDefaultUID
+            suspendProcessingForNonFineTuneOutput()
+            let deviceName = deviceMonitor.device(for: newDefaultUID)?.name ?? newDefaultUID
+            logger.info("Default changed to macOS special output; not restoring FineTune Output: \(deviceName)")
             return
         }
 

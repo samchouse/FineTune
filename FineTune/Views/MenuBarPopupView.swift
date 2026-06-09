@@ -563,7 +563,10 @@ struct MenuBarPopupView: View {
                         // Filter out any device already in the output list (handles
                         // IOBluetooth/CoreAudio timing desync where both report the device).
                         let connectedNames = Set(editableDeviceOrder.map(\.name))
-                        let filteredPaired = pairedDevices.filter { !connectedNames.contains($0.name) }
+                        let filteredPaired = pairedDevices.filter {
+                            !connectedNames.contains($0.name)
+                            && !AudioEngine.isMacOSSpecialOutputDevice(name: $0.name, transport: .bluetooth)
+                        }
                         if !filteredPaired.isEmpty {
                             SectionHeader(title: "Paired")
                                 .frame(maxWidth: .infinity, alignment: .leading)
