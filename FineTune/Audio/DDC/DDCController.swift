@@ -71,8 +71,8 @@ final class DDCController {
         cachedVolumes[deviceID]
     }
 
-    /// Sets the DDC volume for a device (0-100). Debounced to avoid I2C bus spam.
-    func setVolume(for deviceID: AudioDeviceID, to volume: Int) {
+    /// Sets the DDC volume for a device (0-100). Debounced by default to avoid I2C bus spam.
+    func setVolume(for deviceID: AudioDeviceID, to volume: Int, debounced: Bool = true) {
         let clamped = max(0, min(100, volume))
         cachedVolumes[deviceID] = clamped
 
@@ -84,15 +84,19 @@ final class DDCController {
         // Debounce DDC write
         debounceTimers[deviceID]?.cancel()
         let service = services[deviceID]
-        let item = DispatchWorkItem { [weak self] in
-            do {
-                try service?.setAudioVolume(clamped)
-            } catch {
-                self?.logger.error("DDC write failed for device \(deviceID): \(error)")
-            }
-        }
+        let logger = self.logger
+        let item = Self.makeVolumeWriteWorkItem(
+            service: service,
+            deviceID: deviceID,
+            volume: clamped,
+            logger: logger
+        )
         debounceTimers[deviceID] = item
-        ddcQueue.asyncAfter(deadline: .now() + .milliseconds(100), execute: item)
+        if debounced {
+            ddcQueue.asyncAfter(deadline: .now() + .milliseconds(100), execute: item)
+        } else {
+            ddcQueue.async(execute: item)
+        }
     }
 
     /// Software mute: saves current volume, sets to 0.
@@ -130,12 +134,9 @@ final class DDCController {
         for (_, item) in debounceTimers { item.cancel() }
         debounceTimers.removeAll()
 
-        // TODO(Swift 6): This closure captures @MainActor self and runs on ddcQueue.
-        // Currently safe because accessed properties are nonisolated or dispatched
-        // to @MainActor via Task { @MainActor in }.
         let logger = self.logger
-        ddcQueue.async { [weak self, logger] in
-            guard let self else { return }
+        let queue = ddcQueue
+        queue.async { [logger, queue] in
 
             // 1. Discover all DCPAVServiceProxy entries and create DDC services
             let discovered = DDCService.discoverServices()
@@ -189,7 +190,7 @@ final class DDCController {
             }
 
             // 3. Get all CoreAudio output devices (candidates for DDC matching)
-            let coreAudioDevices = self.getCoreAudioOutputDevices()
+            let coreAudioDevices = Self.getCoreAudioOutputDevices()
             for ca in coreAudioDevices {
                 logger.info("DDC probe: CoreAudio candidate: '\(ca.name)' (uid: \(ca.uid))")
             }
@@ -286,9 +287,7 @@ final class DDCController {
                         self.cachedVolumes[deviceID] = savedVolume
                         // Restore saved volume to the display
                         let service = matchedSnapshot[deviceID]
-                        self.ddcQueue.async {
-                            try? service?.setAudioVolume(savedVolume)
-                        }
+                        Self.writeVolumeAsync(on: queue, service: service, volume: savedVolume)
                     } else if let readVolume = volumesSnapshot[deviceID] {
                         self.cachedVolumes[deviceID] = readVolume
                     }
@@ -302,6 +301,27 @@ final class DDCController {
 
     // MARK: - CoreAudio Device Discovery
 
+    private nonisolated static func makeVolumeWriteWorkItem(
+        service: DDCService?,
+        deviceID: AudioDeviceID,
+        volume: Int,
+        logger: Logger
+    ) -> DispatchWorkItem {
+        DispatchWorkItem {
+            do {
+                try service?.setAudioVolume(volume)
+            } catch {
+                logger.error("DDC write failed for device \(deviceID): \(error)")
+            }
+        }
+    }
+
+    private nonisolated static func writeVolumeAsync(on queue: DispatchQueue, service: DDCService?, volume: Int) {
+        queue.async {
+            try? service?.setAudioVolume(volume)
+        }
+    }
+
     private struct CoreAudioDeviceInfo: Sendable {
         let id: AudioDeviceID
         let uid: String
@@ -312,7 +332,7 @@ final class DDCController {
     /// Gets all CoreAudio output devices as candidates for DDC matching.
     /// Includes devices both with and without CoreAudio volume control,
     /// since some monitors report having volume control that doesn't actually work.
-    private nonisolated func getCoreAudioOutputDevices() -> [CoreAudioDeviceInfo] {
+    private nonisolated static func getCoreAudioOutputDevices() -> [CoreAudioDeviceInfo] {
         guard let deviceIDs = try? AudioObjectID.readDeviceList() else { return [] }
 
         var results: [CoreAudioDeviceInfo] = []

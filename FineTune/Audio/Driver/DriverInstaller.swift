@@ -61,63 +61,70 @@ final class DriverInstaller {
             return .failure("Bundled driver not found in the application package.")
         }
         
-        let destinationPath = (installPath as NSString).appendingPathComponent(driverName)
-        
-        // Prepare the script
-        // 1. Create the HAL directory if it doesn't exist
-        // 2. Copy the driver
-        // 3. Restart coreaudiod using killall (launchctl kickstart is blocked by SIP on modern macOS)
-        let script = """
-        do shell script "mkdir -p '\(installPath)' && cp -R '\(bundledDriverPath)' '\(installPath)/' && killall coreaudiod" with administrator privileges
+        let command = installationShellCommand(sourcePath: bundledDriverPath)
+        return await runPrivilegedShellCommand(command, operation: "driver installation")
+    }
+    
+    func uninstall() async -> InstallationResult {
+        let command = """
+        set -e
+        rm -rf \(Self.shellQuoted((installPath as NSString).appendingPathComponent(driverName)))
+        killall -TERM coreaudiod 2>/dev/null || true
         """
-        
-        return await withCheckedContinuation { continuation in
+        return await runPrivilegedShellCommand(command, operation: "driver uninstall")
+    }
+
+    private func installationShellCommand(sourcePath: String) -> String {
+        let installPath = Self.shellQuoted(installPath)
+        let sourcePath = Self.shellQuoted(sourcePath)
+        let finalPath = Self.shellQuoted((self.installPath as NSString).appendingPathComponent(driverName))
+        let tempPath = Self.shellQuoted((self.installPath as NSString).appendingPathComponent(".\(driverName).installing"))
+
+        return """
+        set -e
+        mkdir -p \(installPath)
+        rm -rf \(tempPath)
+        ditto \(sourcePath) \(tempPath)
+        xattr -dr com.apple.quarantine \(tempPath) 2>/dev/null || true
+        chown -R root:wheel \(tempPath)
+        chmod -R go-w \(tempPath)
+        rm -rf \(finalPath)
+        mv \(tempPath) \(finalPath)
+        killall -TERM coreaudiod 2>/dev/null || true
+        """
+    }
+
+    private nonisolated func runPrivilegedShellCommand(_ command: String, operation: String) async -> InstallationResult {
+        await Task.detached(priority: .userInitiated) {
+            let escapedCommand = command
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            let script = #"do shell script "\#(escapedCommand)" with administrator privileges"#
             let appleScript = NSAppleScript(source: script)
             var error: NSDictionary?
             
-            logger.info("Executing driver installation script...")
+            logger.info("Executing \(operation, privacy: .public) script...")
             
             _ = appleScript?.executeAndReturnError(&error)
             
             if let error = error {
                 let errorCode = error[NSAppleScript.errorNumber] as? Int
                 if errorCode == -128 { // User cancelled
-                    logger.info("Driver installation cancelled by user")
-                    continuation.resume(returning: .cancelled)
+                    logger.info("\(operation, privacy: .public) cancelled by user")
+                    return .cancelled
                 } else {
                     let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
-                    logger.error("Driver installation failed: \(errorMessage) (code: \(errorCode ?? 0))")
-                    continuation.resume(returning: .failure(errorMessage))
+                    logger.error("\(operation, privacy: .public) failed: \(errorMessage) (code: \(errorCode ?? 0))")
+                    return .failure(errorMessage)
                 }
             } else {
-                logger.info("Driver installation successful")
-                continuation.resume(returning: .success)
+                logger.info("\(operation, privacy: .public) successful")
+                return .success
             }
-        }
+        }.value
     }
-    
-    func uninstall() async -> InstallationResult {
-        let script = """
-        do shell script "rm -rf '\(installPath)/\(driverName)' && killall coreaudiod" with administrator privileges
-        """
-        
-        return await withCheckedContinuation { continuation in
-            let appleScript = NSAppleScript(source: script)
-            var error: NSDictionary?
-            
-            _ = appleScript?.executeAndReturnError(&error)
-            
-            if let error = error {
-                let errorCode = error[NSAppleScript.errorNumber] as? Int
-                if errorCode == -128 {
-                    continuation.resume(returning: .cancelled)
-                } else {
-                    let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
-                    continuation.resume(returning: .failure(errorMessage))
-                }
-            } else {
-                continuation.resume(returning: .success)
-            }
-        }
+
+    private nonisolated static func shellQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }

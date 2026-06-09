@@ -27,6 +27,9 @@ protocol DeviceVolumeProviding: AnyObject {
     /// Writes a volume scalar through whichever backend this device uses.
     func setVolume(for deviceID: AudioDeviceID, to volume: Float)
 
+    /// Writes a volume scalar without debounce when the backend supports it.
+    func setVolumeImmediately(for deviceID: AudioDeviceID, to volume: Float)
+
     /// Writes a mute state through whichever backend this device uses.
     func setMute(for deviceID: AudioDeviceID, to muted: Bool)
 
@@ -45,6 +48,7 @@ protocol DeviceVolumeProviding: AnyObject {
 
     func start()
     func stop()
+    func pauseForCoreAudioRestart()
 
     /// Called after DDC probe completes to refresh volume/mute states.
     /// Default implementation is a no-op (only relevant for DDC-capable monitors).
@@ -52,6 +56,10 @@ protocol DeviceVolumeProviding: AnyObject {
 }
 
 extension DeviceVolumeProviding {
+    func setVolumeImmediately(for deviceID: AudioDeviceID, to volume: Float) {
+        setVolume(for: deviceID, to: volume)
+    }
+
     func outputProcessingGain(for deviceID: AudioDeviceID) -> Float {
         1.0
     }
@@ -65,4 +73,8 @@ extension DeviceVolumeProviding {
     }
 
     func refreshAfterDDCProbe() {}
+
+    func pauseForCoreAudioRestart() {
+        stop()
+    }
 }

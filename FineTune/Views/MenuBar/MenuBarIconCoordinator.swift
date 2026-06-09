@@ -11,21 +11,22 @@ import os
 @MainActor
 final class MenuBarIconCoordinator {
     private let deviceVolumeMonitor: DeviceVolumeMonitor
-    private let deviceProvider: any AudioDeviceProviding
     private let settings: SettingsManager
+    private weak var audioEngine: AudioEngine?
     private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "MenuBarIconCoordinator")
 
     private weak var cachedButton: NSStatusBarButton?
     private var started = false
+    private var lastAppliedState: MenuBarIconState?
 
     init(
         deviceVolumeMonitor: DeviceVolumeMonitor,
-        deviceProvider: any AudioDeviceProviding,
-        settings: SettingsManager
+        settings: SettingsManager,
+        audioEngine: AudioEngine? = nil
     ) {
         self.deviceVolumeMonitor = deviceVolumeMonitor
-        self.deviceProvider = deviceProvider
         self.settings = settings
+        self.audioEngine = audioEngine
     }
 
     /// Begin observing volume / mute / style and apply state to the menu bar button.
@@ -45,22 +46,18 @@ final class MenuBarIconCoordinator {
     // MARK: - State
 
     private func computeState() -> MenuBarIconState {
+        if audioEngine?.isDriverMaintenanceInProgress == true,
+           let lastAppliedState {
+            return lastAppliedState
+        }
+
         let id = deviceVolumeMonitor.defaultDeviceID
         let volume = deviceVolumeMonitor.volumes[id] ?? 0
         let muted = deviceVolumeMonitor.muteStates[id] ?? false
         return MenuBarIconState.baseline(
             style: settings.appSettings.menuBarIconStyle,
             volume: volume,
-            muted: muted,
-            deviceSymbol: currentDeviceSymbol()
-        )
-    }
-
-    private func currentDeviceSymbol() -> String {
-        MenuBarDeviceIconResolver.resolveSymbol(
-            priorityOrder: settings.devicePriorityOrder,
-            outputDevices: deviceProvider.outputDevices,
-            defaultDeviceID: deviceVolumeMonitor.defaultDeviceID
+            muted: muted
         )
     }
 
@@ -69,9 +66,11 @@ final class MenuBarIconCoordinator {
     private func apply() {
         guard let button = resolveButton() else { return }
         let state = computeState()
+        guard state != lastAppliedState else { return }
         guard let image = state.image.nsImage() else { return }
         addFadeTransition(to: button)
         button.image = image
+        lastAppliedState = state
     }
 
     private func attemptInitialApply(retriesLeft: Int) {
@@ -95,8 +94,7 @@ final class MenuBarIconCoordinator {
             _ = deviceVolumeMonitor.muteStates[id]
             _ = settings.appSettings.menuBarIconStyle
             _ = settings.appSettings.hudStyle
-            _ = settings.devicePriorityOrder
-            _ = deviceProvider.outputDevices
+            _ = audioEngine?.isDriverMaintenanceInProgress
         } onChange: { [weak self] in
             // onChange fires in willSet — the tracked properties are still at their
             // pre-change values inside this closure. Re-register synchronously so the

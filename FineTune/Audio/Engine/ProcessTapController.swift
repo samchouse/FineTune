@@ -55,6 +55,9 @@ final class ProcessTapController: ProcessTapControlling {
     /// Emergency silence flag - zeroes output immediately (used during destructive device switch)
     /// Unlike _isMuted, this bypasses all processing including VU metering
     private nonisolated(unsafe) var _forceSilence: Bool = false
+    /// Route-change silence gate. Applies to both primary and secondary taps so no
+    /// callback can emit while a new output aggregate is being promoted.
+    private nonisolated(unsafe) var _routeSilence: Bool = false
     /// User-controlled mute - still tracks VU levels but outputs silence
     private nonisolated(unsafe) var _isMuted: Bool = false
     // Device volume compensation removed — was dead code (always 1.0).
@@ -725,6 +728,19 @@ final class ProcessTapController: ProcessTapControlling {
 
         let startTime = CFAbsoluteTimeGetCurrent()
         logger.info("[UPDATE] Switching \(self.app.name) to \(newDeviceUIDs.count) device(s)\(sourceDeviceDead ? " (source dead)" : "")")
+
+        _routeSilence = true
+        OSMemoryBarrier()
+        defer {
+            _primaryCurrentVolume = 0
+            _secondaryCurrentVolume = 0
+            _outputGateRawPhase = 0
+            _outputGateProgress = 0
+            _outputGateSilentSamples = 0
+            OSMemoryBarrier()
+            _routeSilence = false
+            OSMemoryBarrier()
+        }
 
         // For now, crossfade uses the first (primary) device
         // All devices in the aggregate will be included
@@ -1517,7 +1533,7 @@ final class ProcessTapController: ProcessTapControlling {
 
         // Force silence — primary only. During destructive device switch,
         // _forceSilence is set before the old IO proc is torn down.
-        if isPrimary && _forceSilence {
+        if _routeSilence || (isPrimary && _forceSilence) {
             for buf in outputBuffers {
                 if let data = buf.mData { memset(data, 0, Int(buf.mDataByteSize)) }
             }

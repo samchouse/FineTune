@@ -41,14 +41,12 @@ nonisolated enum VolumeBucket: Equatable {
 nonisolated enum MenuBarIconState: Equatable {
     case speakerVolume(VolumeBucket)
     case speakerMuted
-    case device(symbol: String)
     case staticBaseline(MenuBarIconImage)
 
     var image: MenuBarIconImage {
         switch self {
         case .speakerVolume(let bucket): return .systemSymbol(bucket.symbolName)
         case .speakerMuted:              return .systemSymbol("speaker.slash.fill")
-        case .device(let symbol):        return .systemSymbol(symbol)
         case .staticBaseline(let image): return image
         }
     }
@@ -60,15 +58,12 @@ extension MenuBarIconState {
     static func baseline(
         style: MenuBarIconStyle,
         volume: Float,
-        muted: Bool,
-        deviceSymbol: String = MenuBarIconStyle.device.iconName
+        muted: Bool
     ) -> MenuBarIconState {
         switch style {
         case .speaker:
             if muted { return .speakerMuted }
             return .speakerVolume(.bucket(for: volume))
-        case .device:
-            return .device(symbol: deviceSymbol)
         case .default:
             return .staticBaseline(.asset("MenuBarIcon"))
         case .waveform:

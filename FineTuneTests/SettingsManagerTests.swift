@@ -365,16 +365,15 @@ struct SettingsManagerHiddenDevicesTests {
 @Suite("MenuBarIconStyle — Enumeration")
 struct MenuBarIconStyleTests {
 
-    @Test("allCases has 5 styles")
+    @Test("allCases has 4 styles")
     func allCasesCount() {
-        #expect(MenuBarIconStyle.allCases.count == 5)
+        #expect(MenuBarIconStyle.allCases.count == 4)
     }
 
     @Test("Only 'default' is not a system symbol")
     func defaultNotSystemSymbol() {
         #expect(!MenuBarIconStyle.default.isSystemSymbol)
         #expect(MenuBarIconStyle.speaker.isSystemSymbol)
-        #expect(MenuBarIconStyle.device.isSystemSymbol)
         #expect(MenuBarIconStyle.waveform.isSystemSymbol)
         #expect(MenuBarIconStyle.equalizer.isSystemSymbol)
     }

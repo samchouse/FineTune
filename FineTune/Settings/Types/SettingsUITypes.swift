@@ -7,7 +7,6 @@ import AppKit
 enum MenuBarIconStyle: String, Codable, CaseIterable, Identifiable {
     case `default` = "Default"
     case speaker = "Speaker"
-    case device = "Device"
     case waveform = "Waveform"
     case equalizer = "Equalizer"
 
@@ -18,7 +17,6 @@ enum MenuBarIconStyle: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .default: return "MenuBarIcon"
         case .speaker: return "speaker.wave.2.fill"
-        case .device: return "headphones"
         case .waveform: return "waveform"
         case .equalizer: return "slider.vertical.3"
         }

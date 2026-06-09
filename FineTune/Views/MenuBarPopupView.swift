@@ -22,6 +22,10 @@ struct MenuBarPopupView: View {
 
     /// Memoized sorted input devices
     @State private var sortedInputDevices: [AudioDevice] = []
+    @State private var frozenOutputVolumes: [AudioDeviceID: Float] = [:]
+    @State private var frozenOutputMuteStates: [AudioDeviceID: Bool] = [:]
+    @State private var frozenInputVolumes: [AudioDeviceID: Float] = [:]
+    @State private var frozenInputMuteStates: [AudioDeviceID: Bool] = [:]
 
     /// Which device tab is selected (false = output, true = input)
     @State private var showingInputDevices = false
@@ -92,6 +96,16 @@ struct MenuBarPopupView: View {
         audioEngine.settingsManager.appSettings.popupSize.dimensions
     }
 
+    private var popupLayoutSignature: String {
+        let driverBannerVisible = !audioEngine.isFineTuneVirtualOutputAvailable || audioEngine.needsDriverUpdate
+        return [
+            driverBannerVisible.description,
+            audioEngine.isDriverMaintenanceInProgress.description,
+            popupDimensions.width.description,
+            popupDimensions.maxContentHeight.description
+        ].joined(separator: ":")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             HStack(alignment: .top) {
@@ -130,6 +144,10 @@ struct MenuBarPopupView: View {
             WindowAppearanceBridge(appearance: audioEngine.settingsManager.appSettings.appearance.nsAppearance)
                 .frame(width: 0, height: 0)
         )
+        .background(
+            PopupWindowSizeInvalidator(trigger: popupLayoutSignature)
+                .frame(width: 0, height: 0)
+        )
         .darkGlassBackground()
         .preferredColorScheme(audioEngine.settingsManager.appSettings.appearance.swiftUIColorScheme)
         .environment(\.appearancePreference, audioEngine.settingsManager.appSettings.appearance)
@@ -144,6 +162,7 @@ struct MenuBarPopupView: View {
             // would suppress the HUD on the first media key at cold launch.
         }
         .onChange(of: audioEngine.outputDevices) { _, _ in
+            guard !audioEngine.isDriverMaintenanceInProgress else { return }
             if isEditingDevicePriority && !wasEditingInputDevices {
                 mergeDeviceChanges(from: audioEngine.outputDevices)
             }
@@ -151,6 +170,7 @@ struct MenuBarPopupView: View {
             syncNavOrder()
         }
         .onChange(of: audioEngine.inputDevices) { _, _ in
+            guard !audioEngine.isDriverMaintenanceInProgress else { return }
             if isEditingDevicePriority && wasEditingInputDevices {
                 mergeDeviceChanges(from: audioEngine.inputDevices)
             }
@@ -181,7 +201,18 @@ struct MenuBarPopupView: View {
             isBluetoothOn = newValue
         }
         .onChange(of: deviceVolumeMonitor.defaultDeviceID) { _, _ in
+            guard !audioEngine.isDriverMaintenanceInProgress else { return }
             updateSortedDevices()
+        }
+        .onChange(of: audioEngine.isDriverMaintenanceInProgress) { _, inProgress in
+            if inProgress {
+                captureMaintenanceDisplayState()
+                return
+            }
+            clearMaintenanceDisplayState()
+            updateSortedDevices()
+            updateSortedInputDevices()
+            syncNavOrder()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
             // Global notification — fires for every window in the process. Filter to
@@ -365,10 +396,11 @@ struct MenuBarPopupView: View {
                             _ = await audioEngine.installDriver()
                         }
                     } label: {
-                        Text(audioEngine.needsDriverUpdate ? "Update" : "Install")
+                        Text(audioEngine.isDriverMaintenanceInProgress ? "Working..." : (audioEngine.needsDriverUpdate ? "Update" : "Install"))
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .disabled(audioEngine.isDriverMaintenanceInProgress)
                 }
             }
             .padding(DesignTokens.Spacing.sm)
@@ -563,7 +595,10 @@ struct MenuBarPopupView: View {
                         // Filter out any device already in the output list (handles
                         // IOBluetooth/CoreAudio timing desync where both report the device).
                         let connectedNames = Set(editableDeviceOrder.map(\.name))
-                        let filteredPaired = pairedDevices.filter { !connectedNames.contains($0.name) }
+                        let filteredPaired = pairedDevices.filter {
+                            !connectedNames.contains($0.name)
+                            && !AudioEngine.isMacOSSpecialOutputDevice(name: $0.name, transport: .bluetooth)
+                        }
                         if !filteredPaired.isEmpty {
                             SectionHeader(title: "Paired")
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -587,8 +622,8 @@ struct MenuBarPopupView: View {
                     InputDeviceRow(
                         device: device,
                         isDefault: device.id == deviceVolumeMonitor.defaultInputDeviceID,
-                        volume: deviceVolumeMonitor.inputVolumes[device.id] ?? 1.0,
-                        isMuted: deviceVolumeMonitor.inputMuteStates[device.id] ?? false,
+                        volume: displayInputVolume(for: device.id),
+                        isMuted: displayInputMute(for: device.id),
                         onSetDefault: {
                             audioEngine.setLockedInputDevice(device)
                         },
@@ -615,8 +650,8 @@ struct MenuBarPopupView: View {
                     DeviceRow(
                         device: device,
                         isDefault: audioEngine.isCurrentPlaybackOutput(device),
-                        volume: deviceVolumeMonitor.volumes[device.id] ?? 1.0,
-                        isMuted: deviceVolumeMonitor.muteStates[device.id] ?? false,
+                        volume: displayOutputVolume(for: device.id),
+                        isMuted: displayOutputMute(for: device.id),
                         volumeBackend: audioEngine.outputVolumeBackend(for: device.id),
                         onSetDefault: {
                             _ = audioEngine.setPlaybackOutputDevice(device.id)
@@ -1164,6 +1199,48 @@ struct MenuBarPopupView: View {
 
     // MARK: - Helpers
 
+    private func captureMaintenanceDisplayState() {
+        frozenOutputVolumes = deviceVolumeMonitor.volumes
+        frozenOutputMuteStates = deviceVolumeMonitor.muteStates
+        frozenInputVolumes = deviceVolumeMonitor.inputVolumes
+        frozenInputMuteStates = deviceVolumeMonitor.inputMuteStates
+    }
+
+    private func clearMaintenanceDisplayState() {
+        frozenOutputVolumes.removeAll()
+        frozenOutputMuteStates.removeAll()
+        frozenInputVolumes.removeAll()
+        frozenInputMuteStates.removeAll()
+    }
+
+    private func displayOutputVolume(for deviceID: AudioDeviceID) -> Float {
+        if audioEngine.isDriverMaintenanceInProgress {
+            return frozenOutputVolumes[deviceID] ?? deviceVolumeMonitor.volumes[deviceID] ?? 1.0
+        }
+        return deviceVolumeMonitor.volumes[deviceID] ?? 1.0
+    }
+
+    private func displayOutputMute(for deviceID: AudioDeviceID) -> Bool {
+        if audioEngine.isDriverMaintenanceInProgress {
+            return frozenOutputMuteStates[deviceID] ?? deviceVolumeMonitor.muteStates[deviceID] ?? false
+        }
+        return deviceVolumeMonitor.muteStates[deviceID] ?? false
+    }
+
+    private func displayInputVolume(for deviceID: AudioDeviceID) -> Float {
+        if audioEngine.isDriverMaintenanceInProgress {
+            return frozenInputVolumes[deviceID] ?? deviceVolumeMonitor.inputVolumes[deviceID] ?? 1.0
+        }
+        return deviceVolumeMonitor.inputVolumes[deviceID] ?? 1.0
+    }
+
+    private func displayInputMute(for deviceID: AudioDeviceID) -> Bool {
+        if audioEngine.isDriverMaintenanceInProgress {
+            return frozenInputMuteStates[deviceID] ?? deviceVolumeMonitor.inputMuteStates[deviceID] ?? false
+        }
+        return deviceVolumeMonitor.inputMuteStates[deviceID] ?? false
+    }
+
     /// Recomputes sorted output devices, filtering hidden ones.
     /// The selected playback output is always kept visible even if hidden.
     /// Falls back to the unfiltered list if the filter produces an empty
@@ -1371,7 +1448,7 @@ struct MenuBarPopupView: View {
                 guard let device = sortedInputDevices.first(where: { $0.uid == uid }) else {
                     return .ignored
                 }
-                let current = Double(deviceVolumeMonitor.inputVolumes[device.id] ?? 1.0)
+                let current = Double(displayInputVolume(for: device.id))
                 let next = Float(max(0.0, min(1.0, current + delta)))
                 deviceVolumeMonitor.setInputVolume(for: device.id, to: next)
             } else {
@@ -1381,7 +1458,7 @@ struct MenuBarPopupView: View {
                 guard let device = sortedDevices.first(where: { $0.uid == uid }) else {
                     return .ignored
                 }
-                let current = Double(deviceVolumeMonitor.volumes[device.id] ?? 1.0)
+                let current = Double(displayOutputVolume(for: device.id))
                 let next = Float(max(0.0, min(1.0, current + delta)))
                 audioEngine.setPlaybackOutputVolume(for: device.id, to: next)
             }
@@ -1495,6 +1572,41 @@ struct MenuBarPopupView: View {
                 end tell
                 """)
             script?.executeAndReturnError(nil)
+        }
+    }
+}
+
+private struct PopupWindowSizeInvalidator: NSViewRepresentable {
+    let trigger: String
+
+    func makeNSView(context: Context) -> NSView {
+        NSView(frame: .zero)
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async {
+            guard let window = view.window,
+                  String(describing: type(of: window)).contains("FluidMenuBarExtra"),
+                  let contentView = window.contentView
+            else { return }
+
+            contentView.invalidateIntrinsicContentSize()
+            contentView.needsLayout = true
+            contentView.layoutSubtreeIfNeeded()
+
+            let fittingSize = contentView.fittingSize
+            guard fittingSize.width > 0, fittingSize.height > 0 else { return }
+
+            let currentFrame = window.frame
+            let currentContentSize = window.contentLayoutRect.size
+            guard abs(currentContentSize.width - fittingSize.width) > 0.5 ||
+                  abs(currentContentSize.height - fittingSize.height) > 0.5
+            else { return }
+
+            var nextFrame = window.frameRect(forContentRect: NSRect(origin: .zero, size: fittingSize))
+            nextFrame.origin.x = currentFrame.origin.x
+            nextFrame.origin.y = currentFrame.maxY - nextFrame.height
+            window.setFrame(nextFrame, display: true, animate: false)
         }
     }
 }

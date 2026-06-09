@@ -136,8 +136,8 @@ struct FineTuneApp: App {
 
         let coordinator = MenuBarIconCoordinator(
             deviceVolumeMonitor: engine.deviceVolumeMonitor as! DeviceVolumeMonitor,
-            deviceProvider: engine.deviceMonitor,
-            settings: settings
+            settings: settings,
+            audioEngine: engine
         )
         // Defer start() so NSApplication.shared is fully bootstrapped before we walk NSApp.windows.
         DispatchQueue.main.async { [coordinator] in coordinator.start() }
@@ -150,12 +150,7 @@ struct FineTuneApp: App {
         let launchState = MenuBarIconState.baseline(
             style: settings.appSettings.menuBarIconStyle,
             volume: launchVolumeMonitor.volumes[launchID] ?? 1.0,
-            muted: launchVolumeMonitor.muteStates[launchID] ?? false,
-            deviceSymbol: MenuBarDeviceIconResolver.resolveSymbol(
-                priorityOrder: settings.devicePriorityOrder,
-                outputDevices: engine.deviceMonitor.outputDevices,
-                defaultDeviceID: launchID
-            )
+            muted: launchVolumeMonitor.muteStates[launchID] ?? false
         )
         launchIconImage = launchState.image.nsImage()
             ?? NSImage(systemSymbolName: "speaker.wave.2", accessibilityDescription: "FineTune")!

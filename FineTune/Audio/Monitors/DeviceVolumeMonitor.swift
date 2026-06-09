@@ -284,6 +284,14 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     }
 
     func stop() {
+        stop(preservingState: false)
+    }
+
+    func pauseForCoreAudioRestart() {
+        stop(preservingState: true)
+    }
+
+    private func stop(preservingState: Bool) {
         logger.debug("Stopping device volume monitor")
 
         // Stop the device list observation loops
@@ -331,6 +339,8 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         cancelAllBluetoothConfirmationTasks()
         cancelAllVolumeLogTasks()
 
+        guard !preservingState else { return }
+
         volumes.removeAll()
         muteStates.removeAll()
         systemDeviceID = .unknown
@@ -362,6 +372,14 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
 
     /// Sets the volume for a specific device
     func setVolume(for deviceID: AudioDeviceID, to volume: Float) {
+        setVolume(for: deviceID, to: volume, debouncedDDC: true)
+    }
+
+    func setVolumeImmediately(for deviceID: AudioDeviceID, to volume: Float) {
+        setVolume(for: deviceID, to: volume, debouncedDDC: false)
+    }
+
+    private func setVolume(for deviceID: AudioDeviceID, to volume: Float, debouncedDDC: Bool) {
         guard deviceID.isValid else {
             logger.warning("Cannot set volume: invalid device ID")
             return
@@ -382,7 +400,7 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
             #if !APP_STORE
             if let ddcController {
                 let ddcVolume = Int(round(clamped * 100))
-                ddcController.setVolume(for: deviceID, to: ddcVolume)
+                ddcController.setVolume(for: deviceID, to: ddcVolume, debounced: debouncedDDC)
                 volumes[deviceID] = clamped
             } else {
                 logger.warning("Failed to set DDC volume on device \(deviceID)")

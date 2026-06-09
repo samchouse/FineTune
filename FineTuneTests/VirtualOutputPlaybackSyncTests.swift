@@ -109,6 +109,35 @@ struct VirtualOutputPlaybackSyncTests {
         #expect(volume.defaultDeviceUID == virtual.uid)
     }
 
+    @Test("macOS special outputs are exempt from FineTune default enforcement")
+    func specialOutputClassification() {
+        #expect(AudioEngine.isMacOSSpecialOutputDevice(name: "Sam's AirPods Pro", transport: .bluetooth))
+        #expect(AudioEngine.isMacOSSpecialOutputDevice(name: "Living Room", transport: .airPlay))
+        #expect(AudioEngine.isMacOSSpecialOutputDevice(name: "Sony WH-1000XM5", transport: .bluetooth))
+        #expect(AudioEngine.isMacOSSpecialOutputDevice(name: "LE Speaker", transport: .bluetoothLE))
+        #expect(!AudioEngine.isMacOSSpecialOutputDevice(name: "USB DAC", transport: .usb))
+    }
+
+    @Test("Bluetooth default changes do not force FineTune Output back as macOS default")
+    func bluetoothDefaultChangeBypassesVirtualOutputEnforcement() {
+        let harness = makeHarness()
+        let bluetoothOutput = AudioDevice(id: 303, uid: "bluetooth-output", name: "Sony WH-1000XM5", icon: nil, supportsAutoEQ: true)
+        let app = AudioApp(
+            id: 1234,
+            processObjectIDs: [],
+            name: "Safari",
+            icon: NSImage(),
+            bundleID: "com.apple.Safari"
+        )
+        harness.deviceMonitor.addOutputDevice(bluetoothOutput)
+        harness.engine.setDevice(for: app, deviceUID: nil)
+
+        harness.volume.onDefaultDeviceChanged?(bluetoothOutput.uid)
+
+        #expect(!harness.volume.setDefaultDeviceCalls.contains(harness.virtual.id))
+        #expect(harness.engine.getDeviceUID(for: app) == harness.physical.uid)
+    }
+
     private struct Harness {
         let engine: AudioEngine
         let volume: MockDeviceVolumeProviding
